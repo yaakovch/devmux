@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# devmux-remote — runs on the host inside WSL/Linux.
+# Manages tmux sessions for a given project + tool.
+set -euo pipefail
+
+# ── Defaults ───────────────────────────────────────────────────────
+PROJECT=""
+TOOL=""
+TOOL_CMD=""
+MODE="resume"
+
+# ── Usage ──────────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: devmux-remote --project <name> --tool <name> [--tool-cmd <cmd>] --mode <resume|new>
+
+Options:
+  --project <name>    Project folder name under ~/projects
+  --tool <name>       Tool nickname (used in session name)
+  --tool-cmd <cmd>    Command to run inside tmux (empty = bash)
+  --mode <resume|new> resume: attach existing or create; new: always create
+  --list-projects     List project folders and exit
+  -h, --help          Show this help
+EOF
+}
+
+# ── Parse args ─────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project)  PROJECT="$2"; shift 2 ;;
+        --tool)     TOOL="$2"; shift 2 ;;
+        --tool-cmd) TOOL_CMD="$2"; shift 2 ;;
+        --mode)     MODE="$2"; shift 2 ;;
+        --list-projects)
+            # Find projects dir and list
+            if [[ -d "$HOME/projects" ]]; then
+                ls -1 "$HOME/projects" 2>/dev/null || true
+            elif [[ -d "$HOME/project" ]]; then
+                ls -1 "$HOME/project" 2>/dev/null || true
+            fi
+            exit 0
+            ;;
+        -h|--help)  usage; exit 0 ;;
+        *)          echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+# ── Validate ───────────────────────────────────────────────────────
+if [[ -z "$PROJECT" || -z "$TOOL" ]]; then
+    echo "Error: --project and --tool are required." >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ "$MODE" != "resume" && "$MODE" != "new" ]]; then
+    echo "Error: --mode must be 'resume' or 'new'." >&2
+    exit 1
+fi
+
+# ── Resolve project directory ──────────────────────────────────────
+PROJECT_DIR=""
+if [[ -d "$HOME/projects/$PROJECT" ]]; then
+    PROJECT_DIR="$HOME/projects/$PROJECT"
+elif [[ -d "$HOME/project/$PROJECT" ]]; then
+    PROJECT_DIR="$HOME/project/$PROJECT"
+else
+    echo "Error: project '$PROJECT' not found in ~/projects or ~/project." >&2
+    exit 1
+fi
+
+# ── Session name ───────────────────────────────────────────────────
+# Sanitize for tmux (replace dots/colons with dashes)
+SAFE_PROJECT="${PROJECT//[.:]/-}"
+SAFE_TOOL="${TOOL//[.:]/-}"
+
+if [[ "$MODE" == "resume" ]]; then
+    SESSION="${SAFE_TOOL}:${SAFE_PROJECT}"
+else
+    SESSION="${SAFE_TOOL}:${SAFE_PROJECT}:$(date +%s)"
+fi
+
+# ── Build tmux command ─────────────────────────────────────────────
+if [[ -n "$TOOL_CMD" ]]; then
+    SHELL_CMD="bash -lc '${TOOL_CMD//\'/\'\\\'\'}; exec bash -l'"
+else
+    SHELL_CMD=""
+fi
+
+# Ensure tmux is available
+if ! command -v tmux &>/dev/null; then
+    echo "Error: tmux is not installed on this host." >&2
+    exit 1
+fi
+
+if [[ "$MODE" == "resume" ]]; then
+    # Attach if exists, otherwise create
+    if tmux has-session -t "=$SESSION" 2>/dev/null; then
+        exec tmux attach-session -t "=$SESSION"
+    fi
+fi
+
+# Create new session
+if [[ -n "$SHELL_CMD" ]]; then
+    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
+else
+    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"
+fi

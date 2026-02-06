@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# devmux — interactive SSH + tmux launcher.
+# Connects to a remote host, picks a project, tool, and tmux mode.
+set -euo pipefail
+
+# ── Config ─────────────────────────────────────────────────────────
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devmux"
+CONFIG_FILE="$CONFIG_DIR/devmux.conf"
+REMOTE_SCRIPT="${REMOTE_SCRIPT:-devmux-remote}"
+SSH_OPTS="${SSH_OPTS:-}"
+
+# ── Defaults (overridden by config) ───────────────────────────────
+HOSTS=()
+TOOLS=("shell")
+TOOL_shell_CMD=""
+
+# ── Usage ──────────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: devmux [OPTIONS]
+
+Interactive menu to SSH into a host, pick a project, tool, and tmux session.
+
+Options:
+  --host <name>       Skip host picker
+  --project <name>    Skip project picker
+  --tool <name>       Skip tool picker
+  --mode <resume|new> Skip mode picker
+  -h, --help          Show this help
+
+Config: ~/.config/devmux/devmux.conf
+EOF
+}
+
+# ── Helpers ────────────────────────────────────────────────────────
+die() { echo "Error: $*" >&2; exit 1; }
+
+# Pick one item from a list. Uses fzf if available, else numbered menu.
+# Usage: pick "prompt" item1 item2 ...
+pick() {
+    local prompt="$1"; shift
+    local items=("$@")
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        die "No items to choose from."
+    fi
+    if [[ ${#items[@]} -eq 1 ]]; then
+        echo "${items[0]}"
+        return
+    fi
+
+    if command -v fzf &>/dev/null; then
+        printf '%s\n' "${items[@]}" | fzf --prompt="$prompt " --height=~20 --reverse
+    elif command -v termux-dialog &>/dev/null 2>&1; then
+        # Termux:API touch-friendly picker
+        local csv
+        csv=$(printf '%s,' "${items[@]}")
+        csv="${csv%,}"
+        local result
+        result=$(termux-dialog sheet -t "$prompt" -v "$csv" 2>/dev/null) || true
+        if [[ -n "$result" ]]; then
+            local picked
+            picked=$(echo "$result" | sed -n 's/.*"text": *"\([^"]*\)".*/\1/p')
+            if [[ -n "$picked" ]]; then
+                echo "$picked"
+                return
+            fi
+        fi
+        # Fall through to numbered menu if termux-dialog fails
+        _pick_numbered "$prompt" "${items[@]}"
+    else
+        _pick_numbered "$prompt" "${items[@]}"
+    fi
+}
+
+_pick_numbered() {
+    local prompt="$1"; shift
+    local items=("$@")
+    echo "$prompt" >&2
+    local i
+    for i in "${!items[@]}"; do
+        echo "  $((i+1))) ${items[$i]}" >&2
+    done
+    while true; do
+        read -rp "#? " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#items[@]} )); then
+            echo "${items[$((choice-1))]}"
+            return
+        fi
+        echo "Invalid choice. Enter 1-${#items[@]}." >&2
+    done
+}
+
+# Get a config variable by name (supports dynamic variable names).
+get_var() {
+    local name="$1"
+    echo "${!name:-}"
+}
+
+# ── Early --help check (before config) ────────────────────────────
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help) usage; exit 0 ;;
+    esac
+done
+
+# ── Load config ───────────────────────────────────────────────────
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "Config not found: $CONFIG_FILE
+Run the installer or copy config/devmux.example.conf there."
+fi
+
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+
+# ── Parse CLI overrides ───────────────────────────────────────────
+ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)    ARG_HOST="$2"; shift 2 ;;
+        --project) ARG_PROJECT="$2"; shift 2 ;;
+        --tool)    ARG_TOOL="$2"; shift 2 ;;
+        --mode)    ARG_MODE="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *)         die "Unknown option: $1" ;;
+    esac
+done
+
+# ── Step 1: Choose host ───────────────────────────────────────────
+if [[ ${#HOSTS[@]} -eq 0 ]]; then
+    die "No HOSTS defined in config."
+fi
+
+if [[ -n "$ARG_HOST" ]]; then
+    HOST="$ARG_HOST"
+else
+    HOST=$(pick "Host:" "${HOSTS[@]}")
+fi
+
+SSH_TARGET=$(get_var "HOST_${HOST}_SSH")
+WSL_PREFIX=$(get_var "HOST_${HOST}_WSL_PREFIX")
+PROJECTS_DIR=$(get_var "HOST_${HOST}_PROJECTS_DIR")
+PROJECTS_DIR="${PROJECTS_DIR:-\$HOME/projects}"
+
+if [[ -z "$SSH_TARGET" ]]; then
+    die "HOST_${HOST}_SSH not set in config."
+fi
+
+# ── Step 2: Fetch remote project list ─────────────────────────────
+echo "Connecting to $HOST ($SSH_TARGET)..." >&2
+
+REMOTE_LS_CMD="ls -1 ${PROJECTS_DIR} 2>/dev/null || true"
+if [[ -n "$WSL_PREFIX" ]]; then
+    REMOTE_CMD="$WSL_PREFIX '$REMOTE_LS_CMD'"
+else
+    REMOTE_CMD="$REMOTE_LS_CMD"
+fi
+
+PROJECT_LIST=""
+# shellcheck disable=SC2086
+PROJECT_LIST=$(ssh $SSH_OPTS -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
+    die "Could not connect to $SSH_TARGET. Check SSH config and connectivity."
+
+if [[ -z "$PROJECT_LIST" ]]; then
+    die "No projects found on $HOST under $PROJECTS_DIR."
+fi
+
+mapfile -t PROJECTS <<< "$PROJECT_LIST"
+
+if [[ -n "$ARG_PROJECT" ]]; then
+    PROJECT="$ARG_PROJECT"
+else
+    PROJECT=$(pick "Project:" "${PROJECTS[@]}")
+fi
+
+# ── Step 3: Choose tool ──────────────────────────────────────────
+if [[ ${#TOOLS[@]} -eq 0 ]]; then
+    die "No TOOLS defined in config."
+fi
+
+if [[ -n "$ARG_TOOL" ]]; then
+    TOOL="$ARG_TOOL"
+else
+    TOOL=$(pick "Tool:" "${TOOLS[@]}")
+fi
+
+TOOL_CMD=$(get_var "TOOL_${TOOL}_CMD")
+
+# ── Step 4: Choose mode ──────────────────────────────────────────
+if [[ -n "$ARG_MODE" ]]; then
+    MODE="$ARG_MODE"
+else
+    MODE=$(pick "Mode:" "resume" "new")
+fi
+
+# ── Step 5: Connect ──────────────────────────────────────────────
+REMOTE_ARGS="--project $(printf '%q' "$PROJECT") --tool $(printf '%q' "$TOOL") --mode $(printf '%q' "$MODE")"
+if [[ -n "$TOOL_CMD" ]]; then
+    REMOTE_ARGS="$REMOTE_ARGS --tool-cmd $(printf '%q' "$TOOL_CMD")"
+fi
+
+REMOTE_EXEC="$REMOTE_SCRIPT $REMOTE_ARGS"
+if [[ -n "$WSL_PREFIX" ]]; then
+    FULL_CMD="$WSL_PREFIX '$REMOTE_EXEC'"
+else
+    FULL_CMD="$REMOTE_EXEC"
+fi
+
+echo "→ $HOST / $PROJECT / $TOOL ($MODE)" >&2
+# shellcheck disable=SC2086
+exec ssh $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"

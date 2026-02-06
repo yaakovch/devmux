@@ -1,0 +1,5 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux:Widget shortcut — launches devmux.
+# Place or symlink this file at ~/.shortcuts/devmux
+# Requires: Termux:Widget app installed from F-Droid.
+exec "$HOME/.local/bin/devmux"
