@@ -4,8 +4,48 @@
 set -euo pipefail
 
 # ── Locate repo and source libraries ─────────────────────────────
-SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+resolve_path() {
+    local path="$1"
+    local resolved=""
+
+    if command -v realpath >/dev/null 2>&1; then
+        resolved=$(realpath "$path" 2>/dev/null || true)
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    if command -v readlink >/dev/null 2>&1; then
+        resolved=$(readlink -f "$path" 2>/dev/null || true)
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    local target="$path"
+    if command -v readlink >/dev/null 2>&1; then
+        while [[ -L "$target" ]]; do
+            local link
+            link=$(readlink "$target")
+            if [[ "$link" = /* ]]; then
+                target="$link"
+            else
+                local dir
+                dir=$(cd "$(dirname "$target")" && pwd -P)
+                target="$dir/$link"
+            fi
+        done
+    fi
+
+    local dir
+    dir=$(cd "$(dirname "$target")" && pwd -P)
+    echo "$dir/$(basename "$target")"
+}
+
+SCRIPT_PATH="$(resolve_path "$0")"
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 
 if [[ -d "$REPO_DIR/lib" ]]; then
     source "$REPO_DIR/lib/common.sh"

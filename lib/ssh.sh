@@ -121,23 +121,25 @@ deploy_key_windows_ssh() {
 # Requires machines.conf to be sourced first.
 generate_ssh_config() {
     local machine var_prefix ts_ip win_user wsl_user os_type
+    local ts_ip_var win_user_var os_type_var wsl_user_var
 
     for machine in "${MACHINES[@]}"; do
         var_prefix="MACHINE_${machine//-/_}"
-        ts_ip="${!var_prefix}_TAILSCALE_IP"
-        ts_ip="${!ts_ip:-}"
-        win_user="${!var_prefix}_WIN_USER"
-        win_user="${!win_user:-}"
-        os_type="${!var_prefix}_OS"
-        os_type="${!os_type:-linux}"
+        ts_ip_var="${var_prefix}_TAILSCALE_IP"
+        ts_ip="${!ts_ip_var:-}"
+        win_user_var="${var_prefix}_WIN_USER"
+        win_user="${!win_user_var:-}"
+        os_type_var="${var_prefix}_OS"
+        os_type="${!os_type_var:-linux}"
 
         [[ -z "$ts_ip" ]] && continue
 
         # Windows hosts: SSH lands on Windows, user is the Windows user
         local ssh_user="$win_user"
         if [[ "$os_type" == "linux" ]] || [[ "$os_type" == "termux" ]]; then
-            local wsl_u="${!var_prefix}_WSL_USER"
-            ssh_user="${!wsl_u:-}"
+            wsl_user_var="${var_prefix}_WSL_USER"
+            wsl_user="${!wsl_user_var:-}"
+            ssh_user="$wsl_user"
         fi
 
         echo "Host ${machine}"
