@@ -3,6 +3,18 @@
 # Connects to a remote host, picks a project, tool, and tmux mode.
 set -euo pipefail
 
+# ── Locate repo and source libraries ─────────────────────────────
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+
+if [[ -d "$REPO_DIR/lib" ]]; then
+    source "$REPO_DIR/lib/common.sh"
+else
+    # Fallback if running outside repo (shouldn't happen with symlink install)
+    die() { echo "Error: $*" >&2; exit 1; }
+    die "Cannot find lib/ directory. Is the devmux repo intact?"
+fi
+
 # ── Config ─────────────────────────────────────────────────────────
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devmux"
 CONFIG_FILE="$CONFIG_DIR/devmux.conf"
@@ -32,71 +44,6 @@ Config: ~/.config/devmux/devmux.conf
 EOF
 }
 
-# ── Helpers ────────────────────────────────────────────────────────
-die() { echo "Error: $*" >&2; exit 1; }
-
-# Pick one item from a list. Uses fzf if available, else numbered menu.
-# Usage: pick "prompt" item1 item2 ...
-pick() {
-    local prompt="$1"; shift
-    local items=("$@")
-
-    if [[ ${#items[@]} -eq 0 ]]; then
-        die "No items to choose from."
-    fi
-    if [[ ${#items[@]} -eq 1 ]]; then
-        echo "${items[0]}"
-        return
-    fi
-
-    if command -v fzf &>/dev/null; then
-        printf '%s\n' "${items[@]}" | fzf --prompt="$prompt " --height=~20 --reverse
-    elif command -v termux-dialog &>/dev/null 2>&1; then
-        # Termux:API touch-friendly picker
-        local csv
-        csv=$(printf '%s,' "${items[@]}")
-        csv="${csv%,}"
-        local result
-        result=$(termux-dialog sheet -t "$prompt" -v "$csv" 2>/dev/null) || true
-        if [[ -n "$result" ]]; then
-            local picked
-            picked=$(echo "$result" | sed -n 's/.*"text": *"\([^"]*\)".*/\1/p')
-            if [[ -n "$picked" ]]; then
-                echo "$picked"
-                return
-            fi
-        fi
-        # Fall through to numbered menu if termux-dialog fails
-        _pick_numbered "$prompt" "${items[@]}"
-    else
-        _pick_numbered "$prompt" "${items[@]}"
-    fi
-}
-
-_pick_numbered() {
-    local prompt="$1"; shift
-    local items=("$@")
-    echo "$prompt" >&2
-    local i
-    for i in "${!items[@]}"; do
-        echo "  $((i+1))) ${items[$i]}" >&2
-    done
-    while true; do
-        read -rp "#? " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#items[@]} )); then
-            echo "${items[$((choice-1))]}"
-            return
-        fi
-        echo "Invalid choice. Enter 1-${#items[@]}." >&2
-    done
-}
-
-# Get a config variable by name (supports dynamic variable names).
-get_var() {
-    local name="$1"
-    echo "${!name:-}"
-}
-
 # ── Early --help check (before config) ────────────────────────────
 for arg in "$@"; do
     case "$arg" in
@@ -107,7 +54,7 @@ done
 # ── Load config ───────────────────────────────────────────────────
 if [[ ! -f "$CONFIG_FILE" ]]; then
     die "Config not found: $CONFIG_FILE
-Run the installer or copy config/devmux.example.conf there."
+Run setup.sh or copy config/devmux.example.conf there."
 fi
 
 # shellcheck source=/dev/null
@@ -137,18 +84,16 @@ else
     HOST=$(pick "Host:" "${HOSTS[@]}")
 fi
 
-SSH_TARGET=$(get_var "HOST_${HOST}_SSH")
-WSL_PREFIX=$(get_var "HOST_${HOST}_WSL_PREFIX")
-PROJECTS_DIR=$(get_var "HOST_${HOST}_PROJECTS_DIR")
+SSH_TARGET=$(get_var "HOST_${HOST//-/_}_SSH")
+WSL_PREFIX=$(get_var "HOST_${HOST//-/_}_WSL_PREFIX")
+PROJECTS_DIR=$(get_var "HOST_${HOST//-/_}_PROJECTS_DIR")
 PROJECTS_DIR="${PROJECTS_DIR:-\$HOME/projects}"
 
 if [[ -z "$SSH_TARGET" ]]; then
-    die "HOST_${HOST}_SSH not set in config."
+    die "HOST_${HOST//-/_}_SSH not set in config."
 fi
 
 # ── Step 2: Fetch remote project list ─────────────────────────────
-echo "Connecting to $HOST ($SSH_TARGET)..." >&2
-
 REMOTE_LS_CMD="ls -1 ${PROJECTS_DIR} 2>/dev/null || true"
 if [[ -n "$WSL_PREFIX" ]]; then
     REMOTE_CMD="$WSL_PREFIX '$REMOTE_LS_CMD'"
@@ -158,7 +103,8 @@ fi
 
 PROJECT_LIST=""
 # shellcheck disable=SC2086
-PROJECT_LIST=$(ssh $SSH_OPTS -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
+PROJECT_LIST=$(spin "Connecting to $HOST ($SSH_TARGET)..." \
+    ssh $SSH_OPTS -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
     die "Could not connect to $SSH_TARGET. Check SSH config and connectivity."
 
 if [[ -z "$PROJECT_LIST" ]]; then
@@ -206,6 +152,6 @@ else
     FULL_CMD="$REMOTE_EXEC"
 fi
 
-echo "→ $HOST / $PROJECT / $TOOL ($MODE)" >&2
+header "→ $HOST / $PROJECT / $TOOL ($MODE)"
 # shellcheck disable=SC2086
 exec ssh $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"
