@@ -1,5 +1,5 @@
 #Requires -RunAsAdministrator
-# setup.ps1 — bootstrap devmux on a Windows host.
+# setup.ps1 - bootstrap devmux on a Windows host.
 # Run this in an ADMIN PowerShell. Handles OpenSSH, authorized_keys, SSH config, WSL.
 param(
     [string]$WslDistro = "Ubuntu",
@@ -14,16 +14,16 @@ Write-Host ""
 Write-Host "=== devmux Windows host setup ===" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Step 1: Check admin privileges ───────────────────────────────
+# -- Step 1: Check admin privileges --
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
-    Write-Host "Right-click PowerShell → 'Run as administrator', then re-run." -ForegroundColor Yellow
+    Write-Host "Right-click PowerShell -> 'Run as administrator', then re-run." -ForegroundColor Yellow
     exit 1
 }
 Write-Host "  Running as Administrator" -ForegroundColor Green
 
-# ── Step 2: Ensure OpenSSH Server ────────────────────────────────
+# -- Step 2: Ensure OpenSSH Server --
 Write-Host ""
 Write-Host "-- OpenSSH Server --" -ForegroundColor Yellow
 
@@ -44,7 +44,7 @@ Start-Service sshd -ErrorAction SilentlyContinue
 Set-Service -Name sshd -StartupType Automatic
 Write-Host "  sshd: running (auto-start enabled)" -ForegroundColor Green
 
-# ── Step 3: Collect public keys ──────────────────────────────────
+# -- Step 3: Collect public keys --
 Write-Host ""
 Write-Host "-- SSH Public Keys --" -ForegroundColor Yellow
 
@@ -98,7 +98,7 @@ if ($keys.Count -eq 0) {
     }
 }
 
-# ── Step 4: Write administrators_authorized_keys ─────────────────
+# -- Step 4: Write administrators_authorized_keys --
 if ($keys.Count -gt 0) {
     Write-Host ""
     Write-Host "-- Authorized Keys --" -ForegroundColor Yellow
@@ -132,7 +132,7 @@ if ($keys.Count -gt 0) {
 
     Write-Host "  Written to: $keyFile ($added new key(s))" -ForegroundColor Green
 
-    # ── Step 5: Fix permissions ──────────────────────────────────
+    # -- Step 5: Fix permissions --
     icacls $keyFile /inheritance:r /grant "SYSTEM:(R)" /grant "BUILTIN\Administrators:(R)" | Out-Null
     Write-Host "  Permissions fixed (SYSTEM + Administrators only)" -ForegroundColor Green
 } else {
@@ -140,7 +140,7 @@ if ($keys.Count -gt 0) {
     Write-Host "  No keys to install. You can add them later by re-running this script." -ForegroundColor Yellow
 }
 
-# ── Step 6: Generate SSH config ──────────────────────────────────
+# -- Step 6: Generate SSH config --
 Write-Host ""
 Write-Host "-- SSH Config --" -ForegroundColor Yellow
 
@@ -206,10 +206,10 @@ if ($machinesConf) {
     [System.IO.File]::WriteAllText($winSshConfig, $finalContent, (New-Object System.Text.UTF8Encoding $false))
     Write-Host "  Updated: $winSshConfig (devmux-managed block)" -ForegroundColor Green
 } else {
-    Write-Host "  machines.conf not found — skipping SSH config generation." -ForegroundColor Yellow
+    Write-Host "  machines.conf not found - skipping SSH config generation." -ForegroundColor Yellow
 }
 
-# ── Step 7: Offer to run setup.sh in WSL ─────────────────────────
+# -- Step 7: Offer to run setup.sh in WSL --
 if (-not $SkipWsl) {
     Write-Host ""
     Write-Host "-- WSL Setup --" -ForegroundColor Yellow
@@ -239,7 +239,7 @@ if (-not $SkipWsl) {
     }
 }
 
-# ── Step 8: Install Windows devmux shim (optional) ───────────────
+# -- Step 8: Install Windows devmux shim (optional) --
 if (-not $SkipShim) {
     Write-Host ""
     Write-Host "-- Windows devmux command --" -ForegroundColor Yellow
