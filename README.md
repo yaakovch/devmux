@@ -50,6 +50,12 @@ bash setup.sh --regen-config
 
 Handles OpenSSH Server, `administrators_authorized_keys` (UTF-8 no BOM, permissions), SSH config, and optionally runs `setup.sh` in WSL.
 
+To add a key from another machine (no password SSH needed), pass it explicitly:
+
+```powershell
+.\setup.ps1 -AddKey "ssh-ed25519 AAAA... comment"
+```
+
 Optional convenience: `setup.ps1` also installs a Windows `devmux` command (`devmux.cmd`) that runs `devmux` inside WSL, so you can type `devmux` from any folder in PowerShell/cmd.
 
 If your WSL distro isn't `Ubuntu`, either run:

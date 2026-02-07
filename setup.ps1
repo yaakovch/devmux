@@ -3,7 +3,8 @@
 param(
     [string]$WslDistro = "Ubuntu",
     [switch]$SkipWsl,
-    [switch]$SkipShim
+    [switch]$SkipShim,
+    [string[]]$AddKey = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +80,20 @@ if (-not $SkipWsl) {
                 Write-Host "  Found key from WSL: $p" -ForegroundColor Green
             }
         }
+    }
+}
+
+# Merge keys provided via -AddKey (e.g. from another machine)
+foreach ($k in $AddKey) {
+    if (-not $k) { continue }
+    $k = $k.Trim()
+    if ($k -match "^ssh-") {
+        if ($keys -notcontains $k) {
+            $keys += $k
+            Write-Host "  Added key from -AddKey" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  WARNING: -AddKey does not look like an SSH public key. Skipping." -ForegroundColor Yellow
     }
 }
 
