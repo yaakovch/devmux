@@ -97,21 +97,30 @@ deploy_key_windows_ssh() {
     key_content=$(<"$pub_key")
 
     info "  Deploying key to Windows host $target..."
-    # Use PowerShell over SSH to handle encoding correctly
+    # Use PowerShell over SSH with stdin to avoid quoting issues
+    local pwsh_script
+    pwsh_script=$(cat <<'PWSH'
+$ErrorActionPreference = 'Stop'
+$KeyFile = "C:\ProgramData\ssh\administrators_authorized_keys"
+$Key = @'
+__DEV_MUX_PUBKEY__
+'@
+
+$existing = if (Test-Path $KeyFile) { Get-Content $KeyFile } else { @() }
+if ($existing -notcontains $Key) {
+    $all = @($existing) + @($Key) | Where-Object { $_.Trim() -ne "" }
+    [System.IO.File]::WriteAllText($KeyFile, ($all -join "`n") + "`n", (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "Key added to $KeyFile"
+} else {
+    Write-Host "Key already present in $KeyFile"
+}
+
+icacls $KeyFile /inheritance:r /grant "SYSTEM:(R)" /grant "BUILTIN\Administrators:(R)" | Out-Null
+PWSH
+)
+    pwsh_script="${pwsh_script/__DEV_MUX_PUBKEY__/$key_content}"
     # shellcheck disable=SC2029
-    ssh "$target" "powershell -NoProfile -Command \"\
-        \\\$keyFile = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'; \
-        \\\$key = '${key_content}'; \
-        \\\$existing = if (Test-Path \\\$keyFile) { Get-Content \\\$keyFile } else { @() }; \
-        if (\\\$existing -notcontains \\\$key) { \
-            \\\$all = @(\\\$existing) + @(\\\$key) | Where-Object { \\\$_.Trim() -ne '' }; \
-            [System.IO.File]::WriteAllText(\\\$keyFile, (\\\$all -join [char]10) + [char]10, (New-Object System.Text.UTF8Encoding \\\$false)); \
-            Write-Host 'Key added'; \
-        } else { \
-            Write-Host 'Key already present'; \
-        }; \
-        icacls \\\$keyFile /inheritance:r /grant 'SYSTEM:(R)' /grant 'BUILTIN\\Administrators:(R)' | Out-Null; \
-    \""
+    ssh "$target" "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File -" <<< "$pwsh_script"
 }
 
 # ── SSH config generation ────────────────────────────────────────

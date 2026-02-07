@@ -336,8 +336,13 @@ if [[ -f "$PUB_KEY_PATH" ]]; then
                 # Try SSH if it already works
                 if ssh -o ConnectTimeout=5 -o BatchMode=yes "${m_win_user}@${m_ts_ip}" "echo ok" &>/dev/null 2>&1; then
                     if confirm "  SSH works to $machine. Deploy key automatically?"; then
-                        deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"
-                        info "  Key deployed to $machine."
+                        if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
+                            info "  Key deployed to $machine."
+                        else
+                            info "  Automatic key deployment failed."
+                            info "  Run these commands on that Windows machine:"
+                            deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                        fi
                     fi
                 else
                     info "  SSH not yet working to $machine. Run these commands on that Windows machine:"
