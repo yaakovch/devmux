@@ -85,6 +85,26 @@ source "$REPO_DIR/lib/ssh.sh"
 # Source machine definitions
 source "$REPO_DIR/machines.conf"
 
+# ── Args ─────────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: setup.sh [OPTIONS]
+
+Options:
+  --regen-config   Regenerate ~/.config/devmux/devmux.conf from machines.conf (overwrites)
+  -h, --help       Show this help
+EOF
+}
+
+REGEN_CONFIG=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --regen-config) REGEN_CONFIG=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "Unknown option: $1 (try --help)" ;;
+    esac
+done
+
 # ── Helper: generate devmux.conf from machines.conf ──────────────
 _generate_devmux_conf() {
     local hosts=()
@@ -297,13 +317,17 @@ if $IS_CLIENT; then
 
     # Generate devmux.conf if missing
     mkdir -p "$CONFIG_DIR"
-    if [[ ! -f "$CONFIG_DIR/devmux.conf" ]]; then
-        info "  Generating devmux.conf from machines.conf..."
+    if [[ "$REGEN_CONFIG" == "true" || ! -f "$CONFIG_DIR/devmux.conf" ]]; then
+        if [[ -f "$CONFIG_DIR/devmux.conf" && "$REGEN_CONFIG" == "true" ]]; then
+            info "  Regenerating devmux.conf from machines.conf..."
+        else
+            info "  Generating devmux.conf from machines.conf..."
+        fi
         _generate_devmux_conf > "$CONFIG_DIR/devmux.conf"
-        info "  Created: $CONFIG_DIR/devmux.conf"
+        info "  Updated: $CONFIG_DIR/devmux.conf"
     else
         info "  Config exists: $CONFIG_DIR/devmux.conf (skipped)"
-        info "  To regenerate: rm $CONFIG_DIR/devmux.conf && re-run setup.sh"
+        info "  To regenerate: bash setup.sh --regen-config"
     fi
 
     # Generate SSH config
@@ -363,8 +387,19 @@ if [[ -f "$PUB_KEY_PATH" ]]; then
                         fi
                     fi
                 else
-                    info "  SSH not yet working to $machine. Run these commands on that Windows machine:"
-                    deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                    info "  SSH not yet working to $machine."
+                    if confirm "  Try deploying key over SSH now? (password prompt expected)"; then
+                        if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
+                            info "  Key deployed to $machine."
+                        else
+                            info "  Automatic key deployment failed."
+                            info "  Run these commands on that Windows machine:"
+                            deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                        fi
+                    else
+                        info "  Run these commands on that Windows machine:"
+                        deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                    fi
                 fi
             else
                 # Linux host — try ssh-copy-id
@@ -379,8 +414,13 @@ if [[ -f "$PUB_KEY_PATH" ]]; then
                     fi
                 else
                     info "  SSH not yet working to $machine."
-                    info "  Copy your public key manually:"
-                    info "    ssh-copy-id $target"
+                    if command -v ssh-copy-id >/dev/null 2>&1 && confirm "  Try deploying key now? (password prompt expected)"; then
+                        deploy_key_linux "$target" "$PUB_KEY_PATH"
+                        info "  Key deployed to $machine."
+                    else
+                        info "  Copy your public key manually:"
+                        info "    ssh-copy-id $target"
+                    fi
                 fi
             fi
         done

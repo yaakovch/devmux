@@ -35,6 +35,12 @@ bash setup.sh
 
 Updating is just `git pull` — scripts are symlinked, not copied.
 
+To regenerate `~/.config/devmux/devmux.conf` from `machines.conf`:
+
+```bash
+bash setup.sh --regen-config
+```
+
 ### Windows host (admin PowerShell)
 
 ```powershell

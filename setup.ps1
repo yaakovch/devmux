@@ -226,28 +226,43 @@ if (-not $SkipWsl) {
     Write-Host ""
     Write-Host "-- WSL Setup --" -ForegroundColor Yellow
 
-    $wslInstalled = $false
+    $wslDistros = @()
     try {
-        $wslList = wsl --list --quiet 2>$null
-        if ($wslList -match $WslDistro) {
-            $wslInstalled = $true
-        }
+        $wslDistros = @(wsl --list --quiet 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
     } catch {}
+
+    $wslInstalled = $false
+    if ($wslDistros -contains $WslDistro) {
+        $wslInstalled = $true
+    }
 
     if ($wslInstalled) {
         Write-Host "  WSL distro '$WslDistro' is available." -ForegroundColor Green
 
         $runWsl = Read-Host "  Run setup.sh inside WSL now? [y/N]"
         if ($runWsl -match "^[Yy]$") {
-            # Convert repo path to WSL path
-            $driveLetter = $RepoDir.Substring(0, 1).ToLower()
-            $wslPath = "/mnt/$driveLetter" + ($RepoDir.Substring(2) -replace '\\', '/')
-            Write-Host "  Running: wsl -d $WslDistro -- bash '$wslPath/setup.sh'" -ForegroundColor Cyan
-            wsl -d $WslDistro -- bash "$wslPath/setup.sh"
+            # Convert repo path to a WSL path.
+            # If running from a UNC path (\\wsl$\Distro\...), map it to /... directly.
+            $wslPath = $null
+            if ($RepoDir -match '^\\\\wsl\\$\\[^\\]+\\(.+)$') {
+                $rest = $Matches[1] -replace '\\', '/'
+                $wslPath = "/$rest"
+            } else {
+                $driveLetter = $RepoDir.Substring(0, 1).ToLower()
+                $wslPath = "/mnt/$driveLetter" + ($RepoDir.Substring(2) -replace '\\', '/')
+            }
+
+            Write-Host "  Running: wsl -d $WslDistro -- bash -lc \"cd '$wslPath' && bash setup.sh\"" -ForegroundColor Cyan
+            wsl -d $WslDistro -- bash -lc "cd '$wslPath' && bash setup.sh"
         }
     } else {
         Write-Host "  WSL distro '$WslDistro' not found." -ForegroundColor Yellow
-        Write-Host "  Install it with: wsl --install -d $WslDistro" -ForegroundColor Yellow
+        if ($wslDistros.Count -gt 0) {
+            Write-Host "  Available distros: $($wslDistros -join ', ')" -ForegroundColor Yellow
+            Write-Host "  Re-run with: .\\setup.ps1 -WslDistro <name>" -ForegroundColor Yellow
+        } else {
+            Write-Host "  No WSL distros detected. Install with: wsl --install -d $WslDistro" -ForegroundColor Yellow
+        }
     }
 }
 
