@@ -117,7 +117,14 @@ _generate_devmux_conf() {
         if [[ "$m_os" == "windows-wsl" ]]; then
             distro_var="${m_prefix}_WSL_DISTRO"
             distro="${!distro_var:-Ubuntu}"
-            host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} --exec bash -lc\"\n"
+            local wsl_user_var wsl_user
+            wsl_user_var="${m_prefix}_WSL_USER"
+            wsl_user="${!wsl_user_var:-}"
+            if [[ -n "$wsl_user" ]]; then
+                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} -u ${wsl_user} --exec bash -lc\"\n"
+            else
+                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} --exec bash -lc\"\n"
+            fi
         else
             host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"\"\n"
         fi

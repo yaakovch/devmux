@@ -1,6 +1,5 @@
-#Requires -RunAsAdministrator
 # setup.ps1 - bootstrap devmux on a Windows host.
-# Run this in an ADMIN PowerShell. Handles OpenSSH, authorized_keys, SSH config, WSL.
+# Run this in PowerShell. Administrator is required for OpenSSH + administrators_authorized_keys.
 param(
     [string]$WslDistro = "Ubuntu",
     [switch]$SkipWsl,
@@ -16,33 +15,38 @@ Write-Host ""
 
 # -- Step 1: Check admin privileges --
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
-    Write-Host "Right-click PowerShell -> 'Run as administrator', then re-run." -ForegroundColor Yellow
-    exit 1
+$IsAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($IsAdmin) {
+    Write-Host "  Running as Administrator" -ForegroundColor Green
+} else {
+    Write-Host "  Not running as Administrator. Will skip OpenSSH + authorized_keys steps." -ForegroundColor Yellow
+    Write-Host "  For full host setup: re-run PowerShell as Administrator." -ForegroundColor Yellow
 }
-Write-Host "  Running as Administrator" -ForegroundColor Green
 
 # -- Step 2: Ensure OpenSSH Server --
 Write-Host ""
 Write-Host "-- OpenSSH Server --" -ForegroundColor Yellow
 
-$sshdService = Get-Service -Name sshd -ErrorAction SilentlyContinue
-if (-not $sshdService) {
-    Write-Host "  Installing OpenSSH Server..."
-    $cap = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*"
-    if ($cap) {
-        Add-WindowsCapability -Online -Name $cap.Name
-    } else {
-        Write-Host "  ERROR: OpenSSH Server capability not found." -ForegroundColor Red
-        Write-Host "  Install manually: Settings > Apps > Optional Features > OpenSSH Server" -ForegroundColor Yellow
-        exit 1
+if ($IsAdmin) {
+    $sshdService = Get-Service -Name sshd -ErrorAction SilentlyContinue
+    if (-not $sshdService) {
+        Write-Host "  Installing OpenSSH Server..."
+        $cap = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*"
+        if ($cap) {
+            Add-WindowsCapability -Online -Name $cap.Name
+        } else {
+            Write-Host "  ERROR: OpenSSH Server capability not found." -ForegroundColor Red
+            Write-Host "  Install manually: Settings > Apps > Optional Features > OpenSSH Server" -ForegroundColor Yellow
+            exit 1
+        }
     }
-}
 
-Start-Service sshd -ErrorAction SilentlyContinue
-Set-Service -Name sshd -StartupType Automatic
-Write-Host "  sshd: running (auto-start enabled)" -ForegroundColor Green
+    Start-Service sshd -ErrorAction SilentlyContinue
+    Set-Service -Name sshd -StartupType Automatic
+    Write-Host "  sshd: running (auto-start enabled)" -ForegroundColor Green
+} else {
+    Write-Host "  Skipped (requires Administrator)." -ForegroundColor Yellow
+}
 
 # -- Step 3: Collect public keys --
 Write-Host ""
@@ -99,7 +103,15 @@ if ($keys.Count -eq 0) {
 }
 
 # -- Step 4: Write administrators_authorized_keys --
-if ($keys.Count -gt 0) {
+if (-not $IsAdmin) {
+    Write-Host ""
+    Write-Host "-- Authorized Keys --" -ForegroundColor Yellow
+    if ($keys.Count -gt 0) {
+        Write-Host "  Found $($keys.Count) key(s), but not installing (requires Administrator)." -ForegroundColor Yellow
+    } else {
+        Write-Host "  No keys to install." -ForegroundColor Yellow
+    }
+} elseif ($keys.Count -gt 0) {
     Write-Host ""
     Write-Host "-- Authorized Keys --" -ForegroundColor Yellow
 

@@ -112,6 +112,8 @@ HOSTS=("gaming-desktop" "work-m")
 HOST_gaming_desktop_SSH="gaming-desktop"
 # Special value: "local" runs devmux-remote locally (no SSH)
 # HOST_gaming_desktop_SSH="local"
+# If SSH lands on Windows, use a WSL prefix to enter the right distro (and user).
+# Example: wsl -d Ubuntu -u sapir_cz --exec bash -lc
 HOST_gaming_desktop_WSL_PREFIX="wsl -d Ubuntu --exec bash -lc"
 
 TOOLS=("codex" "claude" "shell")
