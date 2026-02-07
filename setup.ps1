@@ -254,14 +254,15 @@ if (-not $SkipShim) {
     # A simple shim that launches devmux inside WSL.
     # Supports forwarding args: `devmux --host work-m ...`
     # Use a *single-quoted* here-string to avoid PowerShell expanding `$@`.
-    $shimContent = (@'
+    $shimContent = @'
 @echo off
 setlocal
 set "DISTRO=%DEVMUX_WSL_DISTRO%"
 if "%DISTRO%"=="" set "DISTRO={0}"
 wsl -d %DISTRO% --exec bash -lc "devmux \"$@\"" devmux %*
 endlocal
-'@ -f $WslDistro)
+'@
+    $shimContent = $shimContent -f $WslDistro
 
     [System.IO.File]::WriteAllText($shimPath, $shimContent, [System.Text.Encoding]::ASCII)
     Write-Host "  Installed: $shimPath" -ForegroundColor Green
