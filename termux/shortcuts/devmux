@@ -2,4 +2,11 @@
 # Termux:Widget shortcut — launches devmux.
 # Place or symlink this file at ~/.shortcuts/devmux
 # Requires: Termux:Widget app installed from F-Droid.
-exec "$HOME/.local/bin/devmux"
+if command -v devmux >/dev/null 2>&1; then
+    exec devmux
+elif [[ -x "$HOME/.local/bin/devmux" ]]; then
+    exec "$HOME/.local/bin/devmux"
+else
+    echo "devmux not found in PATH or ~/.local/bin" >&2
+    exit 1
+fi

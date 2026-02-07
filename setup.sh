@@ -4,8 +4,76 @@
 set -euo pipefail
 
 # ── Locate repo root ─────────────────────────────────────────────
-REPO_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
-BIN_DIR="${HOME}/.local/bin"
+resolve_path() {
+    local path="$1"
+    local resolved=""
+
+    if command -v realpath >/dev/null 2>&1; then
+        resolved=$(realpath "$path" 2>/dev/null || true)
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    if command -v readlink >/dev/null 2>&1; then
+        resolved=$(readlink -f "$path" 2>/dev/null || true)
+        if [[ -n "$resolved" ]]; then
+            echo "$resolved"
+            return 0
+        fi
+    fi
+
+    local target="$path"
+    if command -v readlink >/dev/null 2>&1; then
+        while [[ -L "$target" ]]; do
+            local link
+            link=$(readlink "$target")
+            if [[ "$link" = /* ]]; then
+                target="$link"
+            else
+                local dir
+                dir=$(cd "$(dirname "$target")" && pwd -P)
+                target="$dir/$link"
+            fi
+        done
+    fi
+
+    local dir
+    dir=$(cd "$(dirname "$target")" && pwd -P)
+    echo "$dir/$(basename "$target")"
+}
+
+choose_bin_dir() {
+    local platform="$1"
+    local default_dir="$HOME/.local/bin"
+
+    if [[ "$platform" == "termux" && -n "${PREFIX:-}" && -d "$PREFIX/bin" && -w "$PREFIX/bin" ]]; then
+        echo "$PREFIX/bin"
+        return 0
+    fi
+
+    if [[ ":$PATH:" == *":$default_dir:"* ]]; then
+        echo "$default_dir"
+        return 0
+    fi
+
+    local path_dir
+    local -a path_dirs
+    IFS=: read -r -a path_dirs <<< "$PATH"
+    for path_dir in "${path_dirs[@]}"; do
+        [[ -z "$path_dir" || "$path_dir" == "." ]] && continue
+        if [[ -d "$path_dir" && -w "$path_dir" ]]; then
+            echo "$path_dir"
+            return 0
+        fi
+    done
+
+    echo "$default_dir"
+}
+
+SCRIPT_PATH="$(resolve_path "$0")"
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devmux"
 
 # Source libraries
@@ -87,6 +155,7 @@ fi
 # ── Step 1: Detect platform ──────────────────────────────────────
 PLATFORM=$(detect_platform)
 HOSTNAME_SHORT=$(detect_hostname)
+BIN_DIR="$(choose_bin_dir "$PLATFORM")"
 header "devmux setup"
 info "  Platform: $PLATFORM"
 info "  Hostname: $HOSTNAME_SHORT"
@@ -300,7 +369,7 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     info ""
     info "  NOTE: $BIN_DIR is not in your PATH."
     info "  Add this to your shell profile (~/.bashrc or ~/.zshrc):"
-    info "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    info "    export PATH=\"${BIN_DIR}:\$PATH\""
 fi
 
 info ""
