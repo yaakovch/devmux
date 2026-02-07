@@ -268,12 +268,16 @@ else
 fi
 
 # ── Step 5: Connect ──────────────────────────────────────────────
-REMOTE_ARGS="--project $(printf '%q' "$PROJECT") --tool $(printf '%q' "$TOOL") --mode $(printf '%q' "$MODE")"
+REMOTE_ARGV=(--project "$PROJECT" --tool "$TOOL" --mode "$MODE")
 if [[ -n "$TOOL_CMD" ]]; then
-    REMOTE_ARGS="$REMOTE_ARGS --tool-cmd $(printf '%q' "$TOOL_CMD")"
+    REMOTE_ARGV+=(--tool-cmd "$TOOL_CMD")
 fi
 
-REMOTE_EXEC="$REMOTE_SCRIPT $REMOTE_ARGS"
+REMOTE_ARGS_Q=""
+for arg in "${REMOTE_ARGV[@]}"; do
+    REMOTE_ARGS_Q+=" $(printf '%q' "$arg")"
+done
+REMOTE_EXEC="$REMOTE_SCRIPT$REMOTE_ARGS_Q"
 if $LOCAL_MODE; then
     LOCAL_REMOTE_SCRIPT="$(local_remote_script "$REMOTE_SCRIPT" "$REPO_DIR")" || \
         die "Local run requested but devmux-remote not found. Run setup.sh on this host."
@@ -289,7 +293,7 @@ fi
 
 header "→ $HOST / $PROJECT / $TOOL ($MODE)"
 if $LOCAL_MODE; then
-    exec "$LOCAL_REMOTE_SCRIPT" $REMOTE_ARGS
+    exec "$LOCAL_REMOTE_SCRIPT" "${REMOTE_ARGV[@]}"
 else
     # shellcheck disable=SC2086
     exec ssh $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"
