@@ -89,10 +89,21 @@ source "$REPO_DIR/machines.conf"
 _generate_devmux_conf() {
     local hosts=()
     local host_lines=""
+    local is_host="${IS_HOST:-false}"
 
     local machine m_prefix m_os_var m_os distro_var distro
     for machine in "${MACHINES[@]}"; do
-        [[ "$machine" == "$THIS_MACHINE" ]] && continue
+        if [[ "$machine" == "$THIS_MACHINE" ]]; then
+            # If this machine is also a host, include a self-entry that runs locally.
+            # This avoids SSH-to-self loops and lets you use the same menu locally.
+            if [[ "$is_host" == "true" ]]; then
+                hosts+=("$machine")
+                host_lines+="HOST_${machine//-/_}_SSH=\"local\"\n"
+                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"\"\n"
+                host_lines+="\n"
+            fi
+            continue
+        fi
 
         m_prefix="MACHINE_${machine//-/_}"
         m_os_var="${m_prefix}_OS"
