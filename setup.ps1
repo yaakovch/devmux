@@ -3,7 +3,8 @@
 # Run this in an ADMIN PowerShell. Handles OpenSSH, authorized_keys, SSH config, WSL.
 param(
     [string]$WslDistro = "Ubuntu",
-    [switch]$SkipWsl
+    [switch]$SkipWsl,
+    [switch]$SkipShim
 )
 
 $ErrorActionPreference = "Stop"
@@ -236,6 +237,50 @@ if (-not $SkipWsl) {
         Write-Host "  WSL distro '$WslDistro' not found." -ForegroundColor Yellow
         Write-Host "  Install it with: wsl --install -d $WslDistro" -ForegroundColor Yellow
     }
+}
+
+# ── Step 8: Install Windows devmux shim (optional) ───────────────
+if (-not $SkipShim) {
+    Write-Host ""
+    Write-Host "-- Windows devmux command --" -ForegroundColor Yellow
+
+    $shimDir = Join-Path $env:USERPROFILE ".local\bin"
+    $shimPath = Join-Path $shimDir "devmux.cmd"
+
+    if (-not (Test-Path $shimDir)) {
+        New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+    }
+
+    # A simple shim that launches devmux inside WSL.
+    # Supports forwarding args: `devmux --host work-m ...`
+    # Use a *single-quoted* here-string to avoid PowerShell expanding `$@`.
+    $shimContent = (@'
+@echo off
+setlocal
+set "DISTRO=%DEVMUX_WSL_DISTRO%"
+if "%DISTRO%"=="" set "DISTRO={0}"
+wsl -d %DISTRO% --exec bash -lc "devmux \"$@\"" devmux %*
+endlocal
+'@ -f $WslDistro)
+
+    [System.IO.File]::WriteAllText($shimPath, $shimContent, [System.Text.Encoding]::ASCII)
+    Write-Host "  Installed: $shimPath" -ForegroundColor Green
+
+    # Ensure shim dir is in the *user* PATH so `devmux` works from any folder.
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) { $userPath = "" }
+    $parts = @($userPath -split ";" | Where-Object { $_.Trim() -ne "" })
+    if (-not ($parts -contains $shimDir)) {
+        $newPath = @($parts + $shimDir) -join ";"
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        Write-Host "  Added to user PATH: $shimDir" -ForegroundColor Green
+        Write-Host "  Open a new terminal to pick up PATH changes." -ForegroundColor Yellow
+    } else {
+        Write-Host "  Already on user PATH: $shimDir" -ForegroundColor Green
+    }
+
+    Write-Host "  Usage: devmux" -ForegroundColor Cyan
+    Write-Host "  Override distro: set DEVMUX_WSL_DISTRO=Ubuntu-22.04" -ForegroundColor Cyan
 }
 
 Write-Host ""

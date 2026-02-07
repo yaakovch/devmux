@@ -44,6 +44,20 @@ Updating is just `git pull` — scripts are symlinked, not copied.
 
 Handles OpenSSH Server, `administrators_authorized_keys` (UTF-8 no BOM, permissions), SSH config, and optionally runs `setup.sh` in WSL.
 
+Optional convenience: `setup.ps1` also installs a Windows `devmux` command (`devmux.cmd`) that runs `devmux` inside WSL, so you can type `devmux` from any folder in PowerShell/cmd.
+
+If your WSL distro isn't `Ubuntu`, either run:
+
+```powershell
+.\setup.ps1 -WslDistro Ubuntu-22.04
+```
+
+Or set an override for the shim:
+
+```powershell
+setx DEVMUX_WSL_DISTRO Ubuntu-22.04
+```
+
 ### Android (Termux)
 
 ```bash
