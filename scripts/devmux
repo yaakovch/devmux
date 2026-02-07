@@ -136,7 +136,8 @@ fi
 # ── Step 2: Fetch remote project list ─────────────────────────────
 REMOTE_LS_CMD="ls -1 ${PROJECTS_DIR} 2>/dev/null || true"
 if [[ -n "$WSL_PREFIX" ]]; then
-    REMOTE_CMD="$WSL_PREFIX '$REMOTE_LS_CMD'"
+    remote_ls_escaped="${REMOTE_LS_CMD//\"/\\\"}"
+    REMOTE_CMD="$WSL_PREFIX \"${remote_ls_escaped}\""
 else
     REMOTE_CMD="$REMOTE_LS_CMD"
 fi
@@ -187,7 +188,9 @@ fi
 
 REMOTE_EXEC="$REMOTE_SCRIPT $REMOTE_ARGS"
 if [[ -n "$WSL_PREFIX" ]]; then
-    FULL_CMD="$WSL_PREFIX '$REMOTE_EXEC'"
+    # Windows uses cmd-style quoting; wrap the bash command in double quotes.
+    remote_exec_escaped="${REMOTE_EXEC//\"/\\\"}"
+    FULL_CMD="$WSL_PREFIX \"${remote_exec_escaped}\""
 else
     FULL_CMD="$REMOTE_EXEC"
 fi
