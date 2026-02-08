@@ -47,132 +47,45 @@ resolve_path() {
 SCRIPT_PATH="$(resolve_path "$0")"
 REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
 
-# ── Optional self-update (git pull) ───────────────────────────────
-_devmux_self_update() {
-    local repo_dir="$1"
-    local script_path="$2"
-    shift 2
-    local -a argv=("$@")
-
-    local updated=false
-    local old_head="" new_head=""
-
-    # Used if flock(1) is available (preferred).
-    local lock_fd_open=false
-
-    # Used if flock(1) is NOT available (mkdir-based lock).
-    local lock_dir_path=""
-    local state_dir=""
-
-    while true; do
-        # Only attempt once per process to avoid update loops.
-        if [[ -n "${DEVMUX_SELF_UPDATED:-}" ]]; then
-            break
-        fi
-
-        case "${DEVMUX_AUTO_UPDATE:-1}" in
-            0|false|no|off) break ;;
-        esac
-
-        command -v git >/dev/null 2>&1 || break
-        git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || break
-
-        # Cache/lock dir: prefer XDG cache; fall back to /tmp if not writable.
-        local try_dir=""
-        try_dir="${XDG_CACHE_HOME:-$HOME/.cache}/devmux"
-        if mkdir -p "$try_dir" 2>/dev/null; then
-            state_dir="$try_dir"
-        else
-            try_dir="${TMPDIR:-/tmp}/devmux-${UID:-0}"
-            mkdir -p "$try_dir" 2>/dev/null || break
-            state_dir="$try_dir"
-        fi
-
-        # Best-effort lock: skip update if another devmux is updating.
-        if command -v flock >/dev/null 2>&1; then
-            if ! { exec 9>"$state_dir/update.lock"; } 2>/dev/null; then
-                local tmp_dir="${TMPDIR:-/tmp}/devmux-${UID:-0}"
-                mkdir -p "$tmp_dir" 2>/dev/null || break
-                state_dir="$tmp_dir"
-                { exec 9>"$state_dir/update.lock"; } 2>/dev/null || break
-            fi
-            if ! flock -n 9; then
-                exec 9>&- 2>/dev/null || true
-                break
-            fi
-            lock_fd_open=true
-        else
-            lock_dir_path="$state_dir/update.lock.d"
-            if ! mkdir "$lock_dir_path" 2>/dev/null; then
-                if [[ -d "$lock_dir_path" ]]; then
-                    break
+# ── Optional self-update ──────────────────────────────────────────
+# Entire update runs inside `timeout … bash -c` so it can NEVER hang
+# or block startup, regardless of network, git state, or filesystem.
+_devmux_update_result=""
+if [[ -z "${DEVMUX_SELF_UPDATED:-}" ]]; then
+    case "${DEVMUX_AUTO_UPDATE:-1}" in
+        0|false|no|off) ;;
+        *)
+            _devmux_old_head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+            if [[ -n "$_devmux_old_head" ]]; then
+                timeout "${DEVMUX_UPDATE_TIMEOUT_SECS:-10}" bash -c '
+                    repo="$1"
+                    state="${XDG_CACHE_HOME:-$HOME/.cache}/devmux"
+                    mkdir -p "$state" 2>/dev/null || exit 0
+                    lock="$state/update.lock.d"
+                    mkdir "$lock" 2>/dev/null || exit 0
+                    trap "rmdir \"$lock\" 2>/dev/null" EXIT
+                    branch=$(git -C "$repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+                        | sed "s|refs/remotes/origin/||") || true
+                    : "${branch:=main}"
+                    GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never \
+                        GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=5}" \
+                        git -C "$repo" fetch --quiet origin "$branch" 2>/dev/null || exit 0
+                    git -C "$repo" reset --hard "origin/$branch" >/dev/null 2>&1
+                ' _ "$REPO_DIR" 2>/dev/null || true
+                _devmux_new_head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+                if [[ -n "$_devmux_new_head" && "$_devmux_old_head" != "$_devmux_new_head" ]]; then
+                    _devmux_update_result=1
                 fi
-                local tmp_dir="${TMPDIR:-/tmp}/devmux-${UID:-0}"
-                mkdir -p "$tmp_dir" 2>/dev/null || break
-                state_dir="$tmp_dir"
-                lock_dir_path="$state_dir/update.lock.d"
-                mkdir "$lock_dir_path" 2>/dev/null || break
             fi
-        fi
+            ;;
+    esac
+fi
 
-        # Optional interval between update attempts (0 = every run).
-        local interval="${DEVMUX_UPDATE_INTERVAL_SECS:-0}"
-        if [[ "$interval" =~ ^[0-9]+$ ]] && (( interval > 0 )); then
-            local stamp="$state_dir/last_update"
-
-            local now last=0
-            now="$(date +%s 2>/dev/null || echo 0)"
-            last="$(cat "$stamp" 2>/dev/null || echo 0)"
-
-            if [[ "$now" =~ ^[0-9]+$ && "$last" =~ ^[0-9]+$ ]] && (( now - last < interval )); then
-                break
-            fi
-
-            printf '%s' "$now" >"$stamp" 2>/dev/null || true
-        fi
-
-        old_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
-
-        # Determine the default branch (main or master).
-        local default_branch
-        default_branch="$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-            | sed 's|refs/remotes/origin/||')" || true
-        [[ -z "$default_branch" ]] && default_branch="main"
-
-        # Fetch with a hard timeout (covers both SSH and HTTPS remotes).
-        local update_timeout="${DEVMUX_UPDATE_TIMEOUT_SECS:-10}"
-        local ssh_cmd="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=5}"
-        if ! timeout "$update_timeout" env \
-                GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never GIT_SSH_COMMAND="$ssh_cmd" \
-                git -C "$repo_dir" fetch --quiet origin "$default_branch" 2>/dev/null; then
-            break   # network down or timed out — skip update silently
-        fi
-
-        # Reset working tree to match remote (discards local uncommitted changes).
-        git -C "$repo_dir" reset --hard "origin/$default_branch" >/dev/null 2>&1 || break
-        updated=true
-
-        new_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
-        break
-    done
-
-    if $lock_fd_open; then
-        exec 9>&- 2>/dev/null || true
-    fi
-    if [[ -n "$lock_dir_path" ]]; then
-        rmdir "$lock_dir_path" 2>/dev/null || true
-    fi
-
-    if $updated && [[ -n "$old_head" && -n "$new_head" && "$old_head" != "$new_head" ]]; then
-        echo "devmux: updated, restarting..." >&2
-        export DEVMUX_SELF_UPDATED=1
-        exec "$script_path" "${argv[@]}"
-    fi
-
-    return 0
-}
-
-_devmux_self_update "$REPO_DIR" "$SCRIPT_PATH" "$@"
+if [[ -n "$_devmux_update_result" ]]; then
+    echo "devmux: updated, restarting..." >&2
+    export DEVMUX_SELF_UPDATED=1
+    exec "$SCRIPT_PATH" "$@"
+fi
 
 if [[ -d "$REPO_DIR/lib" ]]; then
     source "$REPO_DIR/lib/common.sh"
