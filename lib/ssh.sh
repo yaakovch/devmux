@@ -59,9 +59,11 @@ deploy_key_windows_commands() {
 
 # ── Run these commands in an ADMIN PowerShell on the Windows host ──
 
-# Alternative (recommended): if the devmux repo is on this Windows host, run:
-#   .\\setup.ps1 -AddKey "<your-public-key>"
-# This normalizes whitespace/newlines and fixes permissions automatically.
+# Preferred (recommended): if the devmux repo is on this Windows host, run this one-liner
+# in Windows **Admin PowerShell** (not inside WSL bash):
+#   .\\setup.ps1 -SkipWsl -SkipShim -AddKey "${pub_key_content}"
+#
+# (setup.ps1 normalizes whitespace/newlines and fixes permissions automatically.)
 
 # 1. Ensure OpenSSH Server is running
 Start-Service sshd

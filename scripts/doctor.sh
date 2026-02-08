@@ -72,7 +72,8 @@ for host in "${hosts[@]}"; do
             os_var="${mp}_OS"
             os="${!os_var:-}"
             if [[ "$os" == "windows-wsl" ]]; then
-                echo "      hint: On $host (Windows, Admin PowerShell): run setup.ps1 and add this client key with -AddKey"
+                echo "      hint: On this client: bash \"$REPO_DIR/scripts/show-key.sh\""
+                echo "            On $host (Windows, Admin PowerShell): run setup.ps1 and add this client key with -AddKey"
             fi
         fi
         fail=$((fail + 1))

@@ -20,25 +20,67 @@ devmux                            devmux-remote
 
 ## Setup
 
+### Private repo cloning (GitHub)
+
+If this repo is **private**, clone via SSH (recommended).
+
+Termux / Linux / WSL:
+
+```bash
+pkg install -y git openssh  # termux only
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add the printed key to GitHub: Settings -> SSH and GPG keys -> New SSH key.
+
+Then clone:
+
+```bash
+git clone git@github.com:<owner>/<repo>.git ~/devmux
+```
+
+Notes:
+- Keep this repo private if `machines.conf` (IPs/hostnames/usernames) is sensitive for you.
+- Never commit private keys (`~/.ssh/id_*`).
+
 ### New machine (Linux/WSL/Termux)
 
 ```bash
 git clone <repo-url> ~/devmux
 cd ~/devmux
-bash setup.sh
+bash scripts/bootstrap.sh
 ```
+
+`scripts/bootstrap.sh` updates the repo (auto-stashes local changes by default), then runs `setup.sh --regen-config`.
 
 `setup.sh` auto-detects your platform, identifies the machine, and:
 - **Host**: installs tmux, symlinks `devmux-remote`, creates `~/projects/`
 - **Client**: symlinks `devmux`, generates `~/.ssh/config` and `devmux.conf` from `machines.conf`
 - **SSH keys**: generates if missing, offers to distribute to other machines
 
-Updating is just `git pull` — scripts are symlinked, not copied.
+Updating is:
+
+```bash
+cd ~/devmux && bash scripts/bootstrap.sh
+```
+
+If you had local changes, they will be stashed. Restore later with:
+
+```bash
+cd ~/devmux && git stash pop
+```
 
 To regenerate `~/.config/devmux/devmux.conf` from `machines.conf`:
 
 ```bash
 bash setup.sh --regen-config
+```
+
+To verify SSH connectivity to all hosts from this client:
+
+```bash
+bash scripts/doctor.sh
 ```
 
 ### Windows host (admin PowerShell)
@@ -50,6 +92,12 @@ bash setup.sh --regen-config
 
 Handles OpenSSH Server, `administrators_authorized_keys` (UTF-8 no BOM, permissions), SSH config, and optionally runs `setup.sh` in WSL.
 
+Run WSL setup automatically (recommended):
+
+```powershell
+.\setup.ps1 -RunWslSetup
+```
+
 To add a key from another machine (no password SSH needed), pass it explicitly:
 
 ```powershell
@@ -57,6 +105,12 @@ To add a key from another machine (no password SSH needed), pass it explicitly:
 ```
 
 Optional convenience: `setup.ps1` also installs a Windows `devmux` command (`devmux.cmd`) that runs `devmux` inside WSL, so you can type `devmux` from any folder in PowerShell/cmd.
+
+To create a Desktop shortcut (optional):
+
+```powershell
+.\setup.ps1 -CreateShortcut
+```
 
 If your WSL distro isn't `Ubuntu`, either run:
 
@@ -73,10 +127,10 @@ setx DEVMUX_WSL_DISTRO Ubuntu-22.04
 ### Android (Termux)
 
 ```bash
-pkg install openssh gum   # or fzf — both optional
+pkg install git openssh gum   # or fzf — both optional
 git clone <repo-url> ~/devmux
 cd ~/devmux
-bash setup.sh
+bash scripts/bootstrap.sh
 ```
 
 For one-tap launch: install **Termux:Widget** from F-Droid. `setup.sh` creates the `~/.shortcuts/devmux` symlink automatically.
@@ -170,8 +224,11 @@ devmux/
 │   ├── ssh.sh              # Key gen, distribution, config generation
 │   └── tailscale.sh        # Tailscale detection, identification
 ├── scripts/
+│   ├── bootstrap.sh         # Update + run setup.sh deterministically
+│   ├── doctor.sh            # Connectivity checks
 │   ├── devmux              # Client launcher
-│   └── devmux-remote       # Host session manager
+│   ├── devmux-remote       # Host session manager
+│   └── show-key.sh          # Print a safe-to-paste public key + Windows AddKey command
 ├── config/
 │   └── devmux.example.conf # Example runtime config
 ├── termux/
@@ -196,3 +253,7 @@ devmux/
 **"devmux-remote: command not found"** — Run `setup.sh` on the host, or check that `~/.local/bin` is in PATH.
 
 **Windows SSH key issues** — Run `setup.ps1` as admin. Keys must be in `C:\ProgramData\ssh\administrators_authorized_keys` (UTF-8, no BOM) for admin users.
+
+**Debug quickly** — Run `bash scripts/doctor.sh` on the client.
+
+**Copy a key safely** — Run `bash scripts/show-key.sh` on the client and use the printed Windows `setup.ps1 -AddKey ...` command.

@@ -6,6 +6,7 @@ param(
     [switch]$RunWslSetup,
     [string]$WslSetupArgs = "--regen-config",
     [switch]$SkipShim,
+    [switch]$CreateShortcut,
     [string[]]$AddKey = @()
 )
 
@@ -360,6 +361,27 @@ endlocal
 
     Write-Host "  Usage: devmux" -ForegroundColor Cyan
     Write-Host "  Override distro: set DEVMUX_WSL_DISTRO=Ubuntu-22.04" -ForegroundColor Cyan
+}
+
+if ($CreateShortcut) {
+    Write-Host ""
+    Write-Host "-- Desktop shortcut --" -ForegroundColor Yellow
+
+    $shimDir = Join-Path $env:USERPROFILE ".local\bin"
+    $shimPath = Join-Path $shimDir "devmux.cmd"
+    if (-not (Test-Path $shimPath)) {
+        Write-Host "  devmux.cmd not found: $shimPath" -ForegroundColor Yellow
+        Write-Host "  Re-run setup.ps1 without -SkipShim first." -ForegroundColor Yellow
+    } else {
+        $desktopDir = [Environment]::GetFolderPath("Desktop")
+        $shortcutPath = Join-Path $desktopDir "devmux.lnk"
+        $ws = New-Object -ComObject WScript.Shell
+        $sc = $ws.CreateShortcut($shortcutPath)
+        $sc.TargetPath = $shimPath
+        $sc.WorkingDirectory = $env:USERPROFILE
+        $sc.Save()
+        Write-Host "  Created: $shortcutPath" -ForegroundColor Green
+    }
 }
 
 Write-Host ""
