@@ -92,14 +92,19 @@ Usage: setup.sh [OPTIONS]
 
 Options:
   --regen-config   Regenerate ~/.config/devmux/devmux.conf from machines.conf (overwrites)
+  --try-windows-password-deploy
+                   When a Windows host is not yet reachable via key auth, try deploying your key over SSH
+                   anyway (will prompt for a Windows password). Default: off (prints instructions instead).
   -h, --help       Show this help
 EOF
 }
 
 REGEN_CONFIG=false
+TRY_WINDOWS_PASSWORD_DEPLOY=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --regen-config) REGEN_CONFIG=true; shift ;;
+        --try-windows-password-deploy) TRY_WINDOWS_PASSWORD_DEPLOY=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1 (try --help)" ;;
     esac
@@ -388,17 +393,16 @@ if [[ -f "$PUB_KEY_PATH" ]]; then
                     fi
                 else
                     info "  SSH not yet working to $machine."
-                    if confirm "  Try deploying key over SSH now? (password prompt expected)"; then
+                    info "  Run these commands on that Windows machine:"
+                    deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+
+                    if [[ "$TRY_WINDOWS_PASSWORD_DEPLOY" == "true" ]] && \
+                       confirm "  Try deploying key over SSH now anyway? (password prompt expected)"; then
                         if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
                             info "  Key deployed to $machine."
                         else
                             info "  Automatic key deployment failed."
-                            info "  Run these commands on that Windows machine:"
-                            deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
                         fi
-                    else
-                        info "  Run these commands on that Windows machine:"
-                        deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
                     fi
                 fi
             else
