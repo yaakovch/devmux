@@ -267,7 +267,7 @@ if (-not $SkipWsl) {
                 $wslPath = "/mnt/$driveLetter" + ($RepoDir.Substring(2) -replace '\\', '/')
             }
 
-            Write-Host "  Running: wsl -d $WslDistro -- bash -lc \"cd '$wslPath' && bash setup.sh\"" -ForegroundColor Cyan
+            Write-Host ("  Running: wsl -d {0} -- bash -lc ""cd '{1}' && bash setup.sh""" -f $WslDistro, $wslPath) -ForegroundColor Cyan
             wsl -d $WslDistro -- bash -lc "cd '$wslPath' && bash setup.sh"
         }
     } else {
