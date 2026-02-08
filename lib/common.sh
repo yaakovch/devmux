@@ -69,7 +69,7 @@ pick() {
 
     if _has_gum; then
         if [[ ${#items[@]} -le 10 ]]; then
-            gum choose --header "$prompt" "${items[@]}"
+            gum choose --header "$prompt" -- "${items[@]}"
         else
             printf '%s\n' "${items[@]}" | gum filter --header "$prompt"
         fi
@@ -128,7 +128,7 @@ multi_pick() {
     fi
 
     if _has_gum; then
-        gum choose --no-limit --header "$prompt" "${items[@]}" || true
+        gum choose --no-limit --header "$prompt" -- "${items[@]}" || true
     elif command -v fzf &>/dev/null; then
         printf '%s\n' "${items[@]}" | fzf --multi --prompt="$prompt " --height=~20 --reverse || true
     elif command -v termux-dialog &>/dev/null 2>&1; then
