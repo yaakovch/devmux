@@ -21,7 +21,6 @@ if [[ -z "${REPO_DIR:-}" ]]; then
     _SETTINGS_PATH="$(_resolve_path "$0")"
     REPO_DIR="$(cd "$(dirname "$_SETTINGS_PATH")/.." && pwd -P)"
     source "$REPO_DIR/lib/common.sh"
-    source "$REPO_DIR/lib/platform.sh"
 
     CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devmux"
     CONFIG_FILE="$CONFIG_DIR/devmux.conf"
@@ -30,6 +29,9 @@ if [[ -z "${REPO_DIR:-}" ]]; then
         source "$CONFIG_FILE"
     fi
 fi
+
+# Always source platform.sh (needed for detect_platform in settings_menu)
+source "$REPO_DIR/lib/platform.sh"
 
 # ── Catppuccin Mocha color scheme for Windows Terminal ─────────────
 CATPPUCCIN_MOCHA_SCHEME='{
