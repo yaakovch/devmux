@@ -74,9 +74,13 @@ SAFE_PROJECT="${PROJECT//[.:]/-}"
 SAFE_TOOL="${TOOL//[.:]/-}"
 
 if [[ "$MODE" == "resume" ]]; then
-    SESSION="${SAFE_TOOL}:${SAFE_PROJECT}"
+    SESSION_BASE_PRIMARY="${SAFE_TOOL}:${SAFE_PROJECT}"
+    SESSION_BASE_LEGACY="${SAFE_TOOL}_${SAFE_PROJECT}"
+    SESSION="$SESSION_BASE_PRIMARY"
 else
-    SESSION="${SAFE_TOOL}:${SAFE_PROJECT}:$(date +%s)"
+    SESSION_BASE_PRIMARY="${SAFE_TOOL}:${SAFE_PROJECT}"
+    SESSION_BASE_LEGACY=""
+    SESSION="${SESSION_BASE_PRIMARY}:$(date +%s)"
 fi
 
 # ── Build tmux command ─────────────────────────────────────────────
@@ -92,16 +96,25 @@ if ! command -v tmux &>/dev/null; then
     exit 1
 fi
 
-if [[ "$MODE" == "resume" ]]; then
-    # Attach if exists, otherwise create
-    if tmux has-session -t "=$SESSION" 2>/dev/null; then
-        exec tmux attach-session -t "=$SESSION"
+# Backward-compat: older devmux versions used <tool>_<project> for sessions.
+# If the new name doesn't exist but the legacy one does, attach the legacy.
+if [[ "$MODE" == "resume" && -n "${SESSION_BASE_LEGACY:-}" ]]; then
+    if tmux has-session -t "=$SESSION_BASE_PRIMARY" 2>/dev/null; then
+        SESSION="$SESSION_BASE_PRIMARY"
+    elif tmux has-session -t "=$SESSION_BASE_LEGACY" 2>/dev/null; then
+        SESSION="$SESSION_BASE_LEGACY"
     fi
 fi
 
-# Create new session
 if [[ -n "$SHELL_CMD" ]]; then
+    if [[ "$MODE" == "resume" ]]; then
+        # -A: attach if it exists, otherwise create (avoids "duplicate session" races)
+        exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
+    fi
     exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
-else
-    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"
 fi
+
+if [[ "$MODE" == "resume" ]]; then
+    exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR"
+fi
+exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"

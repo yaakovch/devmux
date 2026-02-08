@@ -14,3 +14,6 @@ Thumbs.db
 *.key
 id_rsa*
 devmux.conf
+
+# Terminal Paste Image folder
+.cp-images/
