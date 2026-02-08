@@ -301,7 +301,11 @@ Options:
   --project <name>    Skip project picker
   --tool <name>       Skip tool picker
   --mode <resume|new> Skip mode picker
+  --settings          Open settings menu
   -h, --help          Show this help
+
+Subcommands:
+  settings            Open settings menu (same as --settings)
 
 Config: ~/.config/devmux/devmux.conf
 EOF
@@ -324,17 +328,26 @@ fi
 source "$CONFIG_FILE"
 
 # ── Parse CLI overrides ───────────────────────────────────────────
-ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE=""
+ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE="" ARG_SETTINGS=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --host)    ARG_HOST="$2"; shift 2 ;;
-        --project) ARG_PROJECT="$2"; shift 2 ;;
-        --tool)    ARG_TOOL="$2"; shift 2 ;;
-        --mode)    ARG_MODE="$2"; shift 2 ;;
-        -h|--help) usage; exit 0 ;;
-        *)         die "Unknown option: $1" ;;
+        --host)     ARG_HOST="$2"; shift 2 ;;
+        --project)  ARG_PROJECT="$2"; shift 2 ;;
+        --tool)     ARG_TOOL="$2"; shift 2 ;;
+        --mode)     ARG_MODE="$2"; shift 2 ;;
+        --settings) ARG_SETTINGS=true; shift ;;
+        settings)   ARG_SETTINGS=true; shift ;;
+        -h|--help)  usage; exit 0 ;;
+        *)          die "Unknown option: $1" ;;
     esac
 done
+
+# ── Handle settings early ────────────────────────────────────────
+if $ARG_SETTINGS; then
+    source "$REPO_DIR/scripts/devmux-settings"
+    settings_menu
+    exit 0
+fi
 
 # ── Step 1: Choose host ───────────────────────────────────────────
 if [[ ${#HOSTS[@]} -eq 0 ]]; then
@@ -344,7 +357,12 @@ fi
 if [[ -n "$ARG_HOST" ]]; then
     HOST="$ARG_HOST"
 else
-    HOST=$(pick "Host:" "${HOSTS[@]}")
+    HOST=$(pick "Host:" "${HOSTS[@]}" "--- Settings ---")
+    if [[ "$HOST" == "--- Settings ---" ]]; then
+        source "$REPO_DIR/scripts/devmux-settings"
+        settings_menu
+        exec "$SCRIPT_PATH"
+    fi
 fi
 
 SSH_TARGET=$(get_var "HOST_${HOST//-/_}_SSH")

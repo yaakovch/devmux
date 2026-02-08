@@ -183,7 +183,7 @@ if ! command -v gum &>/dev/null; then
             echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
             sudo apt-get update -qq && sudo apt-get install -y -qq gum
         elif command -v pacman &>/dev/null; then
-            sudo pacman -Sy --noconfirm gum
+            sudo pacman -Syu --noconfirm gum
         elif command -v pkg &>/dev/null; then
             pkg install -y gum
         elif command -v brew &>/dev/null; then
@@ -282,7 +282,7 @@ if $IS_HOST; then
         if command -v apt-get &>/dev/null; then
             sudo apt-get update -qq && sudo apt-get install -y -qq tmux
         elif command -v pacman &>/dev/null; then
-            sudo pacman -Sy --noconfirm tmux
+            sudo pacman -Syu --noconfirm tmux
         elif command -v pkg &>/dev/null; then
             pkg install -y tmux
         elif command -v brew &>/dev/null; then
@@ -301,6 +301,12 @@ if $IS_HOST; then
     # Ensure ~/projects
     mkdir -p "$HOME/projects"
     info "  Ensured ~/projects/ exists"
+
+    # Offer terminal environment provisioning
+    info ""
+    if confirm "  Setup terminal environment (tmux theme, prompt, aliases)?"; then
+        bash "$REPO_DIR/scripts/setup-host.sh" --interactive
+    fi
 fi
 
 # ── Step 5: Client setup ─────────────────────────────────────────

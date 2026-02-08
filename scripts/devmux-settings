@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# devmux-settings — TUI settings menu for devmux.
+# Can be run standalone or sourced by scripts/devmux.
+
+# ── Locate repo and source libraries (when run standalone) ─────────
+if [[ -z "${REPO_DIR:-}" ]]; then
+    _resolve_path() {
+        local path="$1" resolved=""
+        if command -v realpath >/dev/null 2>&1; then
+            resolved=$(realpath "$path" 2>/dev/null || true)
+            [[ -n "$resolved" ]] && { echo "$resolved"; return 0; }
+        fi
+        if command -v readlink >/dev/null 2>&1; then
+            resolved=$(readlink -f "$path" 2>/dev/null || true)
+            [[ -n "$resolved" ]] && { echo "$resolved"; return 0; }
+        fi
+        local dir
+        dir=$(cd "$(dirname "$path")" && pwd -P)
+        echo "$dir/$(basename "$path")"
+    }
+    _SETTINGS_PATH="$(_resolve_path "$0")"
+    REPO_DIR="$(cd "$(dirname "$_SETTINGS_PATH")/.." && pwd -P)"
+    source "$REPO_DIR/lib/common.sh"
+    source "$REPO_DIR/lib/platform.sh"
+
+    CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devmux"
+    CONFIG_FILE="$CONFIG_DIR/devmux.conf"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # shellcheck source=/dev/null
+        source "$CONFIG_FILE"
+    fi
+fi
+
+# ── Catppuccin Mocha color scheme for Windows Terminal ─────────────
+CATPPUCCIN_MOCHA_SCHEME='{
+    "name": "Catppuccin Mocha",
+    "cursorColor": "#F5E0DC",
+    "selectionBackground": "#585B70",
+    "background": "#1E1E2E",
+    "foreground": "#CDD6F4",
+    "black": "#45475A",
+    "red": "#F38BA8",
+    "green": "#A6E3A1",
+    "yellow": "#F9E2AF",
+    "blue": "#89B4FA",
+    "purple": "#F5C2E7",
+    "cyan": "#94E2D5",
+    "white": "#BAC2DE",
+    "brightBlack": "#585B70",
+    "brightRed": "#F38BA8",
+    "brightGreen": "#A6E3A1",
+    "brightYellow": "#F9E2AF",
+    "brightBlue": "#89B4FA",
+    "brightPurple": "#F5C2E7",
+    "brightCyan": "#94E2D5",
+    "brightWhite": "#A6ADC8"
+}'
+
+# ── Setup remote host ─────────────────────────────────────────────
+setup_remote_host() {
+    if [[ ${#HOSTS[@]} -eq 0 ]]; then
+        info "No HOSTS defined in config."
+        return
+    fi
+
+    local host
+    host=$(pick "Which host to provision:" "${HOSTS[@]}")
+    [[ -z "$host" ]] && return
+
+    local features
+    features=$(multi_pick "Select features to install:" "tmux" "starship" "aliases" "tools" "zoxide")
+    [[ -z "$features" ]] && { info "No features selected."; return; }
+
+    # Convert newline-separated to comma-separated
+    local flags
+    flags=$(echo "$features" | tr '\n' ',' | sed 's/,$//')
+
+    info ""
+    info "Host: $host"
+    info "Features: $flags"
+    if ! confirm "Proceed?"; then
+        return
+    fi
+
+    local ssh_target wsl_prefix
+    ssh_target=$(get_var "HOST_${host//-/_}_SSH")
+    wsl_prefix=$(get_var "HOST_${host//-/_}_WSL_PREFIX")
+
+    if [[ -z "$ssh_target" ]]; then
+        info "SSH target for host '$host' is empty (HOST_${host//-/_}_SSH). Fix your config and retry."
+        return
+    fi
+
+    local setup_script="$REPO_DIR/scripts/setup-host.sh"
+
+    # Detect if target is local
+    local is_local=false
+    case "$ssh_target" in
+        local|localhost|127.0.0.1|::1) is_local=true ;;
+    esac
+
+    if $is_local; then
+        info "Running locally..."
+        bash "$setup_script" --only "$flags"
+    elif [[ -n "$wsl_prefix" ]]; then
+        info "Piping setup-host.sh to $host (WSL)..."
+        # shellcheck disable=SC2086
+        ssh ${SSH_OPTS:-} "$ssh_target" "$wsl_prefix \"bash -s -- --only '$flags'\"" < "$setup_script"
+    else
+        info "Piping setup-host.sh to $host..."
+        # shellcheck disable=SC2086
+        ssh ${SSH_OPTS:-} "$ssh_target" "bash -s -- --only '$flags'" < "$setup_script"
+    fi
+}
+
+# ── Setup Windows Terminal ────────────────────────────────────────
+setup_windows_terminal() {
+    local win_user
+    win_user=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r')
+
+    if [[ -z "$win_user" ]]; then
+        info "Could not detect Windows username."
+        return
+    fi
+
+    local settings_path="/mnt/c/Users/$win_user/AppData/Local/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"
+
+    if [[ ! -f "$settings_path" ]]; then
+        info "Windows Terminal settings not found at:"
+        info "  $settings_path"
+        info "Is Windows Terminal installed?"
+        return
+    fi
+
+    # Back up original
+    local backup="${settings_path}.devmux-backup"
+    if [[ ! -f "$backup" ]]; then
+        cp "$settings_path" "$backup"
+        info "Backed up to ${backup##*/}"
+    fi
+
+    local json_tool=""
+    if command -v jq &>/dev/null; then
+        json_tool="jq"
+    elif command -v python3 &>/dev/null; then
+        json_tool="python3"
+    else
+        info "Need jq or python3 to modify Windows Terminal settings."
+        return
+    fi
+
+    info "Applying Catppuccin Mocha theme to Windows Terminal..."
+
+    if [[ "$json_tool" == "jq" ]]; then
+        local tmpfile
+        tmpfile=$(mktemp "$(dirname "$settings_path")/settings.json.devmux.XXXXXX")
+
+        jq --argjson scheme "$CATPPUCCIN_MOCHA_SCHEME" '
+            # Add scheme if not present
+            (if .schemes then .schemes else [] end) as $existing |
+            (if ($existing | map(.name) | index("Catppuccin Mocha")) then $existing
+             else $existing + [$scheme] end) as $new_schemes |
+            .schemes = $new_schemes |
+            # Set defaults
+            .profiles.defaults.colorScheme = "Catppuccin Mocha" |
+            .profiles.defaults.font.face = "Hack Nerd Font" |
+            .profiles.defaults.font.size = 13 |
+            .profiles.defaults.opacity = 85 |
+            .profiles.defaults.useAcrylic = true
+        ' "$settings_path" > "$tmpfile" && mv "$tmpfile" "$settings_path"
+    else
+        python3 -c "
+import json, sys
+import os, tempfile
+
+scheme = json.loads('''$CATPPUCCIN_MOCHA_SCHEME''')
+
+path = '$settings_path'
+with open(path, 'r') as f:
+    settings = json.load(f)
+
+schemes = settings.get('schemes', [])
+if not any(s.get('name') == 'Catppuccin Mocha' for s in schemes):
+    schemes.append(scheme)
+settings['schemes'] = schemes
+
+defaults = settings.setdefault('profiles', {}).setdefault('defaults', {})
+defaults['colorScheme'] = 'Catppuccin Mocha'
+defaults.setdefault('font', {})['face'] = 'Hack Nerd Font'
+defaults['font']['size'] = 13
+defaults['opacity'] = 85
+defaults['useAcrylic'] = True
+
+dir = os.path.dirname(path)
+fd, tmp = tempfile.mkstemp(prefix='settings.json.devmux.', suffix='.tmp', dir=dir)
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(settings, f, indent=4)
+    os.replace(tmp, path)
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+"
+    fi
+
+    info ""
+    info "Windows Terminal configured with Catppuccin Mocha theme."
+    info ""
+    info "NOTE: Install Hack Nerd Font from https://www.nerdfonts.com/ if not installed."
+    info "      Download 'Hack Nerd Font' and install the .ttf files."
+}
+
+# ── Main settings menu ────────────────────────────────────────────
+settings_menu() {
+    while true; do
+        header "Settings"
+
+        local options=("Setup remote host")
+
+        # Only show Windows Terminal option on WSL
+        local platform
+        platform=$(detect_platform)
+        if [[ "$platform" == "wsl" ]]; then
+            options+=("Setup local client (Windows Terminal)")
+        fi
+
+        options+=("Back")
+
+        local choice
+        choice=$(pick "Settings:" "${options[@]}")
+
+        case "$choice" in
+            "Setup remote host")
+                setup_remote_host
+                ;;
+            "Setup local client (Windows Terminal)")
+                setup_windows_terminal
+                ;;
+            "Back"|"")
+                return
+                ;;
+        esac
+    done
+}
+
+# Run if executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    settings_menu
+fi
