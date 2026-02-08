@@ -65,6 +65,11 @@ Updating is:
 cd ~/devmux && bash scripts/bootstrap.sh
 ```
 
+`devmux` (and `devmux-remote`) also try to auto-update on launch via `git pull --ff-only` (non-interactive; skips if offline/auth is missing). Controls:
+- `DEVMUX_AUTO_UPDATE=0` disable auto-update
+- `DEVMUX_UPDATE_INTERVAL_SECS=600` only attempt updates every 10 minutes
+- `DEVMUX_UPDATE_STASH=1` allow auto-stash when the repo is dirty (Termux-friendly)
+
 If you had local changes, they will be stashed. Restore later with:
 
 ```bash
