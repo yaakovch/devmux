@@ -133,46 +133,24 @@ _devmux_self_update() {
 
         old_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
 
-        local dirty=false
-        if ! git -C "$repo_dir" diff --quiet --ignore-submodules -- 2>/dev/null; then
-            dirty=true
-        elif ! git -C "$repo_dir" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
-            dirty=true
-        elif [[ -n "$(git -C "$repo_dir" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
-            dirty=true
-        fi
+        # Determine the default branch (main or master).
+        local default_branch
+        default_branch="$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+            | sed 's|refs/remotes/origin/||')" || true
+        [[ -z "$default_branch" ]] && default_branch="main"
 
-        local stash_mode="${DEVMUX_UPDATE_STASH:-}"
-        if [[ -z "$stash_mode" ]]; then
-            if command -v termux-info >/dev/null 2>&1 || [[ "${PREFIX:-}" == "/data/data/com.termux/files/usr"* ]]; then
-                stash_mode=1
-            else
-                stash_mode=0
-            fi
-        fi
-
-        if $dirty; then
-            case "$stash_mode" in
-                1|true|yes|on)
-                    echo "devmux: repo dirty; stashing local changes before update..." >&2
-                    local ts msg
-                    ts="$(date +%Y%m%d-%H%M%S 2>/dev/null || date)"
-                    msg="devmux-auto-stash $ts"
-                    GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never \
-                        git -C "$repo_dir" stash push -u -m "$msg" >/dev/null 2>&1 || true
-                    ;;
-                *)
-                    echo "devmux: repo dirty; skipping auto-update (set DEVMUX_UPDATE_STASH=1 to auto-stash)" >&2
-                    break
-                    ;;
-            esac
-        fi
-
+        # Fetch with a hard timeout (covers both SSH and HTTPS remotes).
+        local update_timeout="${DEVMUX_UPDATE_TIMEOUT_SECS:-10}"
         local ssh_cmd="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=5}"
-        if GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never GIT_SSH_COMMAND="$ssh_cmd" \
-            git -C "$repo_dir" pull --ff-only >/dev/null 2>&1; then
-            updated=true
+        if ! timeout "$update_timeout" env \
+                GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never GIT_SSH_COMMAND="$ssh_cmd" \
+                git -C "$repo_dir" fetch --quiet origin "$default_branch" 2>/dev/null; then
+            break   # network down or timed out — skip update silently
         fi
+
+        # Reset working tree to match remote (discards local uncommitted changes).
+        git -C "$repo_dir" reset --hard "origin/$default_branch" >/dev/null 2>&1 || break
+        updated=true
 
         new_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)"
         break
