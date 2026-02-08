@@ -26,3 +26,6 @@ if command -v clip.exe >/dev/null 2>&1; then
     echo "Copied to Windows clipboard."
 fi
 
+echo ""
+echo "Windows (Admin PowerShell), from the devmux repo folder:"
+echo "  .\\setup.ps1 -SkipWsl -SkipShim -AddKey '$KEY'"
