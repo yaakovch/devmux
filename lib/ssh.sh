@@ -59,13 +59,20 @@ deploy_key_windows_commands() {
 
 # ── Run these commands in an ADMIN PowerShell on the Windows host ──
 
+# Alternative (recommended): if the devmux repo is on this Windows host, run:
+#   .\\setup.ps1 -AddKey "<your-public-key>"
+# This normalizes whitespace/newlines and fixes permissions automatically.
+
 # 1. Ensure OpenSSH Server is running
 Start-Service sshd
 Set-Service -Name sshd -StartupType Automatic
 
 # 2. Write key to administrators_authorized_keys (UTF-8, no BOM)
 \$keyFile = "C:\\ProgramData\\ssh\\administrators_authorized_keys"
-\$key = "${pub_key_content}"
+\$keyRaw = @'
+${pub_key_content}
+'@
+\$key = (\$keyRaw -replace "\\s+", " ").Trim()
 
 # Read existing keys, deduplicate, append new
 \$existing = if (Test-Path \$keyFile) { Get-Content \$keyFile } else { @() }
