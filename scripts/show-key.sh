@@ -28,4 +28,5 @@ fi
 
 echo ""
 echo "Windows (Admin PowerShell), from the devmux repo folder:"
+echo "  (Run this in Windows PowerShell, not inside WSL bash.)"
 echo "  .\\setup.ps1 -SkipWsl -SkipShim -AddKey '$KEY'"
