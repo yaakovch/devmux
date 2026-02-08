@@ -36,12 +36,13 @@ echo "devmux doctor"
 echo "  config: $CONFIG_FILE"
 echo ""
 
-if [[ ${#HOSTS[@]:-0} -eq 0 ]]; then
+hosts=("${HOSTS[@]-}")
+if [[ ${#hosts[@]} -eq 0 ]]; then
     echo "FAIL: HOSTS is empty in devmux.conf" >&2
     exit 1
 fi
 
-for host in "${HOSTS[@]}"; do
+for host in "${hosts[@]}"; do
     ssh_target_var="HOST_${host//-/_}_SSH"
     wsl_prefix_var="HOST_${host//-/_}_WSL_PREFIX"
 
@@ -92,4 +93,3 @@ echo "Summary: OK=$ok FAIL=$fail"
 if [[ $fail -gt 0 ]]; then
     exit 2
 fi
-
