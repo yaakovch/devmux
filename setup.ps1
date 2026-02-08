@@ -3,6 +3,8 @@
 param(
     [string]$WslDistro = "Ubuntu",
     [switch]$SkipWsl,
+    [switch]$RunWslSetup,
+    [string]$WslSetupArgs = "--regen-config",
     [switch]$SkipShim,
     [string[]]$AddKey = @()
 )
@@ -276,8 +278,15 @@ if (-not $SkipWsl) {
     if ($wslInstalled) {
         Write-Host "  WSL distro '$WslDistro' is available." -ForegroundColor Green
 
-        $runWsl = Read-Host "  Run setup.sh inside WSL now? [y/N]"
-        if ($runWsl -match "^[Yy]$") {
+        $doRun = $false
+        if ($RunWslSetup) {
+            $doRun = $true
+        } else {
+            $runWsl = Read-Host "  Run setup.sh inside WSL now? [y/N]"
+            if ($runWsl -match "^[Yy]$") { $doRun = $true }
+        }
+
+        if ($doRun) {
             # Convert repo path to a WSL path.
             # If running from a UNC path (\\wsl$\Distro\...), map it to /... directly.
             $wslPath = $null
@@ -289,8 +298,13 @@ if (-not $SkipWsl) {
                 $wslPath = "/mnt/$driveLetter" + ($RepoDir.Substring(2) -replace '\\', '/')
             }
 
-            Write-Host ("  Running: wsl -d {0} -- bash -lc ""cd '{1}' && bash setup.sh""" -f $WslDistro, $wslPath) -ForegroundColor Cyan
-            wsl -d $WslDistro -- bash -lc "cd '$wslPath' && bash setup.sh"
+            $args = $WslSetupArgs
+            if (-not $args) { $args = "" }
+
+            # Pull latest scripts inside WSL when running WSL setup (keeps shim + WSL scripts in sync).
+            $bashCmd = "cd '$wslPath' && if command -v git >/dev/null 2>&1; then git pull --rebase; fi && bash setup.sh $args"
+            Write-Host ("  Running: wsl -d {0} -- bash -lc ""{1}""" -f $WslDistro, $bashCmd) -ForegroundColor Cyan
+            wsl -d $WslDistro -- bash -lc "$bashCmd"
         }
     } else {
         Write-Host "  WSL distro '$WslDistro' not found." -ForegroundColor Yellow
