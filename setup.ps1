@@ -74,8 +74,11 @@ if (-not $SkipWsl) {
 
     foreach ($p in ($wslPaths | Select-Object -Unique)) {
         if (Test-Path $p) {
-            $k = (Get-Content $p -Raw).Trim()
-            if ($k -and ($keys -notcontains $k)) {
+            $k = (Get-Content $p -Raw)
+            if ($k) {
+                $k = ($k -replace "\s+", " ").Trim()
+            }
+            if ($k -and ($k -match "^(ssh-|ecdsa-|sk-)\S+\s+\S+") -and ($keys -notcontains $k)) {
                 $keys += $k
                 Write-Host "  Found key from WSL: $p" -ForegroundColor Green
             }
@@ -86,8 +89,8 @@ if (-not $SkipWsl) {
 # Merge keys provided via -AddKey (e.g. from another machine)
 foreach ($k in $AddKey) {
     if (-not $k) { continue }
-    $k = $k.Trim()
-    if ($k -match "^ssh-") {
+    $k = ($k -replace "\s+", " ").Trim()
+    if ($k -match "^(ssh-|ecdsa-|sk-)\S+\s+\S+") {
         if ($keys -notcontains $k) {
             $keys += $k
             Write-Host "  Added key from -AddKey" -ForegroundColor Green
@@ -108,8 +111,8 @@ if ($keys.Count -eq 0) {
     $choice = Read-Host "  Choice [1/2]"
     if ($choice -eq "1") {
         $pastedKey = Read-Host "  Paste your public key"
-        $pastedKey = $pastedKey.Trim()
-        if ($pastedKey -match "^ssh-") {
+        $pastedKey = ($pastedKey -replace "\s+", " ").Trim()
+        if ($pastedKey -match "^(ssh-|ecdsa-|sk-)\S+\s+\S+") {
             $keys += $pastedKey
         } else {
             Write-Host "  WARNING: That doesn't look like an SSH public key. Skipping." -ForegroundColor Yellow
@@ -137,18 +140,37 @@ if (-not $IsAdmin) {
         New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
     }
 
-    # Read existing keys
+    # Read existing keys, with a small repair for accidental multi-line pastes:
+    # If a line is just a key type (e.g. "ssh-ed25519") and the next line looks like base64, join them.
     $existing = @()
     if (Test-Path $keyFile) {
-        $existing = @(Get-Content $keyFile | Where-Object { $_.Trim() -ne "" })
+        $raw = @(Get-Content $keyFile)
+        for ($i = 0; $i -lt $raw.Count; $i++) {
+            $line = $raw[$i]
+            if ($null -eq $line) { continue }
+            $line = $line.Trim()
+            if ($line -eq "") { continue }
+
+            if ($line -match "^(ssh-|ecdsa-|sk-)\S+$" -and ($i + 1) -lt $raw.Count) {
+                $next = $raw[$i + 1]
+                if ($null -ne $next) { $next = $next.Trim() }
+                if ($next -match "^[A-Za-z0-9+/]+={0,3}(\s+.*)?$") {
+                    $line = "$line $next"
+                    $i++
+                }
+            }
+
+            $existing += $line
+        }
     }
 
     # Merge and deduplicate
     $allKeys = @($existing)
     $added = 0
     foreach ($k in $keys) {
-        if ($allKeys -notcontains $k) {
-            $allKeys += $k
+        $kNorm = ($k -replace "\s+", " ").Trim()
+        if ($kNorm -and ($allKeys -notcontains $kNorm)) {
+            $allKeys += $kNorm
             $added++
         }
     }
