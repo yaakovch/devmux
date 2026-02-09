@@ -410,11 +410,56 @@ install_tools() {
             fi
 
             _apt_install fzf
+
+            # yazi - terminal file manager (not in default apt, use cargo or binary)
+            if command -v yazi &>/dev/null; then
+                ok "yazi already installed"
+            else
+                info "Installing yazi..."
+                if ! $DRY_RUN; then
+                    # Try installing via cargo first (if available)
+                    if command -v cargo &>/dev/null; then
+                        cargo install yazi-fm yazi-cli 2>/dev/null && ok "yazi (via cargo)" || warn "Could not install yazi via cargo"
+                    else
+                        # Fallback to downloading prebuilt binary
+                        local yazi_version="0.3.3"
+                        local yazi_arch
+                        yazi_arch=$(uname -m)
+                        case "$yazi_arch" in
+                            x86_64) yazi_arch="x86_64-unknown-linux-gnu" ;;
+                            aarch64) yazi_arch="aarch64-unknown-linux-gnu" ;;
+                            *) yazi_arch="" ;;
+                        esac
+                        if [[ -n "$yazi_arch" ]]; then
+                            local yazi_url="https://github.com/sxyazi/yazi/releases/download/v${yazi_version}/yazi-${yazi_arch}.zip"
+                            local yazi_tmp
+                            yazi_tmp=$(mktemp -d)
+                            if curl -sSL "$yazi_url" -o "$yazi_tmp/yazi.zip" 2>/dev/null; then
+                                if command -v unzip &>/dev/null; then
+                                    unzip -q "$yazi_tmp/yazi.zip" -d "$yazi_tmp"
+                                    cp "$yazi_tmp/yazi-${yazi_arch}/yazi" "$LOCAL_BIN/yazi" 2>/dev/null
+                                    chmod +x "$LOCAL_BIN/yazi" 2>/dev/null
+                                    ok "yazi → $LOCAL_BIN/yazi"
+                                else
+                                    warn "unzip not available, cannot extract yazi"
+                                fi
+                            else
+                                warn "Could not download yazi"
+                            fi
+                            rm -rf "$yazi_tmp"
+                        else
+                            warn "Unsupported architecture for yazi binary: $(uname -m)"
+                        fi
+                    fi
+                else
+                    info "Would install yazi"
+                fi
+            fi
             ;;
 
         pkg)
             # Termux
-            local pkg_tools=(starship eza bat ripgrep fd zoxide fzf)
+            local pkg_tools=(starship eza bat ripgrep fd zoxide fzf yazi)
             for tool in "${pkg_tools[@]}"; do
                 if command -v "$tool" &>/dev/null; then
                     ok "$tool already installed"
@@ -431,7 +476,7 @@ install_tools() {
             ;;
 
             pacman)
-            local pacman_tools=(starship eza bat ripgrep fd zoxide fzf)
+            local pacman_tools=(starship eza bat ripgrep fd zoxide fzf yazi)
             local missing=()
             for tool in "${pacman_tools[@]}"; do
                 if command -v "$tool" &>/dev/null; then
@@ -452,7 +497,7 @@ install_tools() {
             ;;
 
         brew)
-            local brew_tools=(starship eza bat ripgrep fd zoxide fzf)
+            local brew_tools=(starship eza bat ripgrep fd zoxide fzf yazi)
             for tool in "${brew_tools[@]}"; do
                 if command -v "$tool" &>/dev/null; then
                     ok "$tool already installed"
@@ -470,7 +515,7 @@ install_tools() {
 
         none)
             warn "No package manager detected. Install tools manually:"
-            warn "  starship, eza, bat, ripgrep, fd-find, zoxide, fzf"
+            warn "  starship, eza, bat, ripgrep, fd-find, zoxide, fzf, yazi"
             ;;
     esac
 }
@@ -523,6 +568,9 @@ bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
 
 bind -n M-H previous-window
 bind -n M-L next-window
+
+# yazi file manager - open in split pane (Ctrl+A, f)
+bind f split-window -h -c "#{pane_current_path}" "yazi" \; swap-pane -U
 
 # ── plugins (managed by TPM - install with Ctrl+A, Shift+I) ─────────
 set -g @plugin 'tmux-plugins/tpm'
@@ -748,6 +796,7 @@ command -v rg   >/dev/null 2>&1 && alias grep="rg"
 command -v fd   >/dev/null 2>&1 && alias find="fd"
 command -v nvim >/dev/null 2>&1 && alias vim="nvim"
 command -v nvim >/dev/null 2>&1 && alias v="nvim"
+command -v yazi >/dev/null 2>&1 && alias fm="yazi"
 
 # Utilities
 ports() { lsof -i -P -n 2>/dev/null | grep LISTEN; }

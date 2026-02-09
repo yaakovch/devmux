@@ -38,7 +38,7 @@ CATPPUCCIN_MOCHA_SCHEME='{
     "name": "Catppuccin Mocha",
     "cursorColor": "#F5E0DC",
     "selectionBackground": "#585B70",
-    "background": "#1E1E2E",
+    "background": "#000000",
     "foreground": "#CDD6F4",
     "black": "#45475A",
     "red": "#F38BA8",
@@ -167,8 +167,8 @@ setup_windows_terminal() {
             .profiles.defaults.colorScheme = "Catppuccin Mocha" |
             .profiles.defaults.font.face = "Hack Nerd Font" |
             .profiles.defaults.font.size = 13 |
-            .profiles.defaults.opacity = 85 |
-            .profiles.defaults.useAcrylic = true
+            .profiles.defaults.opacity = 100 |
+            .profiles.defaults.useAcrylic = false
         ' "$settings_path" > "$tmpfile" && mv "$tmpfile" "$settings_path"
     else
         python3 -c "
@@ -190,8 +190,8 @@ defaults = settings.setdefault('profiles', {}).setdefault('defaults', {})
 defaults['colorScheme'] = 'Catppuccin Mocha'
 defaults.setdefault('font', {})['face'] = 'Hack Nerd Font'
 defaults['font']['size'] = 13
-defaults['opacity'] = 85
-defaults['useAcrylic'] = True
+defaults['opacity'] = 100
+defaults['useAcrylic'] = False
 
 dir = os.path.dirname(path)
 fd, tmp = tempfile.mkstemp(prefix='settings.json.devmux.', suffix='.tmp', dir=dir)
