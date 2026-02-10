@@ -392,9 +392,11 @@ if $LOCAL_MODE; then
 
 else
     if [[ -n "$WSL_PREFIX" ]]; then
-        # Use base64 encoding to safely pass the command through WSL
+        # Use base64 encoding to safely pass the command through WSL.
+        # Double quotes are critical: Windows CMD ignores single quotes and
+        # splits on unquoted pipes, breaking the entire command.
         remote_ls_b64=$(echo "$REMOTE_LS_CMD" | base64 -w0)
-        REMOTE_CMD="$WSL_PREFIX bash -c 'echo $remote_ls_b64 | base64 -d | bash'"
+        REMOTE_CMD="$WSL_PREFIX bash -lc \"echo $remote_ls_b64 | base64 -d | bash\""
     else
         REMOTE_CMD="$REMOTE_LS_CMD"
     fi
@@ -487,9 +489,9 @@ if $LOCAL_MODE; then
         die "Local run requested but devmux-remote not found. Run setup.sh on this host."
 else
     if [[ -n "$WSL_PREFIX" ]]; then
-        # Use base64 encoding to safely pass the command through WSL
+        # Double quotes protect pipes from Windows CMD interpretation
         remote_exec_b64=$(echo "$REMOTE_EXEC" | base64 -w0)
-        FULL_CMD="$WSL_PREFIX bash -c 'echo $remote_exec_b64 | base64 -d | bash'"
+        FULL_CMD="$WSL_PREFIX bash -lc \"echo $remote_exec_b64 | base64 -d | bash\""
     else
         FULL_CMD="$REMOTE_EXEC"
     fi

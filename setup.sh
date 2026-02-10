@@ -146,9 +146,9 @@ _generate_devmux_conf() {
             wsl_user_var="${m_prefix}_WSL_USER"
             wsl_user="${!wsl_user_var:-}"
             if [[ -n "$wsl_user" ]]; then
-                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} -u ${wsl_user} --exec bash -lc\"\n"
+                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} -u ${wsl_user} --exec\"\n"
             else
-                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} --exec bash -lc\"\n"
+                host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"wsl -d ${distro} --exec\"\n"
             fi
         else
             host_lines+="HOST_${machine//-/_}_WSL_PREFIX=\"\"\n"
