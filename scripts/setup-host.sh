@@ -475,7 +475,7 @@ install_tools() {
             done
             ;;
 
-            pacman)
+        pacman)
             local pacman_tools=(starship eza bat ripgrep fd zoxide fzf yazi)
             local missing=()
             for tool in "${pacman_tools[@]}"; do

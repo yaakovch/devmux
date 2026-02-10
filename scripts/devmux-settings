@@ -2,6 +2,8 @@
 # devmux-settings — TUI settings menu for devmux.
 # Can be run standalone or sourced by scripts/devmux.
 
+set -euo pipefail
+
 # ── Locate repo and source libraries (when run standalone) ─────────
 if [[ -z "${REPO_DIR:-}" ]]; then
     _resolve_path() {
@@ -214,6 +216,51 @@ finally:
     info "      Download 'Hack Nerd Font' and install the .ttf files."
 }
 
+# ── Session cleanup ───────────────────────────────────────────────
+cleanup_sessions() {
+    step "Tmux Session Cleanup"
+    
+    if ! command -v tmux &>/dev/null; then
+        warn "tmux is not installed."
+        return
+    fi
+    
+    # Get list of sessions
+    local sessions
+    sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null || true)
+    
+    if [[ -z "$sessions" ]]; then
+        info "No tmux sessions found."
+        return
+    fi
+    
+    info "Active tmux sessions:"
+    tmux list-sessions -F "  #{session_name} (#{session_windows} windows, #{session_attached} attached)"
+    
+    echo ""
+    if ! confirm "Kill all detached sessions?"; then
+        info "Cancelled."
+        return
+    fi
+    
+    # Kill detached sessions
+    local killed=0
+    while IFS= read -r session; do
+        local attached
+        attached=$(tmux list-sessions -t "$session" -F "#{session_attached}" 2>/dev/null || echo "1")
+        if [[ "$attached" == "0" ]]; then
+            tmux kill-session -t "$session" 2>/dev/null && ((killed++))
+        fi
+    done <<< "$sessions"
+    
+    ok "Killed $killed detached session(s)."
+    
+    # Show remaining sessions
+    local remaining
+    remaining=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | wc -l)
+    info "$remaining session(s) still active."
+}
+
 # ── Main settings menu ────────────────────────────────────────────
 settings_menu() {
     while true; do
@@ -227,6 +274,9 @@ settings_menu() {
         if [[ "$platform" == "wsl" ]]; then
             options+=("Setup local client (Windows Terminal)")
         fi
+        
+        # Add session cleanup option
+        options+=("Cleanup tmux sessions")
 
         options+=("Back")
 
@@ -239,6 +289,9 @@ settings_menu() {
                 ;;
             "Setup local client (Windows Terminal)")
                 setup_windows_terminal
+                ;;
+            "Cleanup tmux sessions")
+                cleanup_sessions
                 ;;
             "Back"|"")
                 return

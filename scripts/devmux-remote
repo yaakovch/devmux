@@ -3,6 +3,14 @@
 # Manages tmux sessions for a given project + tool.
 set -euo pipefail
 
+# ── Debug mode ─────────────────────────────────────────────────────
+DEBUG_MODE="${DEVMUX_DEBUG:-false}"
+debug() {
+    if [[ "$DEBUG_MODE" == "true" ]]; then
+        echo "[DEBUG] $*" >&2
+    fi
+}
+
 # ── Locate repo (for optional self-update) ──────────────────────────
 resolve_path() {
     local path="$1"
@@ -241,6 +249,20 @@ if [[ "$MODE" != "resume" && "$MODE" != "new" ]]; then
     exit 1
 fi
 
+# ── Validate and sanitize PROJECT and TOOL names ───────────────────
+# Check for invalid characters (newlines, control chars)
+if [[ "$PROJECT" =~ [[:cntrl:]] || "$TOOL" =~ [[:cntrl:]] ]]; then
+    echo "Error: PROJECT and TOOL names cannot contain control characters or newlines." >&2
+    exit 1
+fi
+
+# Auto-sanitize spaces to dashes
+if [[ "$PROJECT" =~ [[:space:]] || "$TOOL" =~ [[:space:]] ]]; then
+    echo "Warning: Spaces in PROJECT/TOOL names will be converted to dashes." >&2
+    PROJECT="${PROJECT//[[:space:]]/-}"
+    TOOL="${TOOL//[[:space:]]/-}"
+fi
+
 # ── Resolve project directory ──────────────────────────────────────
 PROJECT_DIR=""
 if [[ -d "$HOME/projects/$PROJECT" ]]; then
@@ -248,7 +270,12 @@ if [[ -d "$HOME/projects/$PROJECT" ]]; then
 elif [[ -d "$HOME/project/$PROJECT" ]]; then
     PROJECT_DIR="$HOME/project/$PROJECT"
 else
-    echo "Error: project '$PROJECT' not found in ~/projects or ~/project." >&2
+    echo "Error: Project '$PROJECT' not found" >&2
+    echo "  Searched in:" >&2
+    echo "    - $HOME/projects/$PROJECT" >&2
+    echo "    - $HOME/project/$PROJECT" >&2
+    echo "  To create it:" >&2
+    echo "    mkdir -p ~/projects/$PROJECT && cd ~/projects/$PROJECT" >&2
     exit 1
 fi
 
@@ -264,8 +291,15 @@ if [[ "$MODE" == "resume" ]]; then
 else
     SESSION_BASE_PRIMARY="${SAFE_TOOL}:${SAFE_PROJECT}"
     SESSION_BASE_LEGACY=""
-    SESSION="${SESSION_BASE_PRIMARY}:$(date +%s)"
+    SESSION="${SESSION_BASE_PRIMARY}:$(date +%s%N | cut -c1-16)"
 fi
+
+debug "Project: $PROJECT"
+debug "Tool: $TOOL"
+debug "Mode: $MODE"
+debug "Session: $SESSION"
+debug "Project Dir: $PROJECT_DIR"
+debug "Tool CMD: ${TOOL_CMD:-'(none)'}"
 
 # ── Build tmux command ─────────────────────────────────────────────
 if [[ -n "$TOOL_CMD" ]]; then
@@ -277,6 +311,11 @@ fi
 # Ensure tmux is available
 if ! command -v tmux &>/dev/null; then
     echo "Error: tmux is not installed on this host." >&2
+    echo "  Install it with your package manager:" >&2
+    echo "    Ubuntu/Debian: sudo apt install tmux" >&2
+    echo "    Arch: sudo pacman -S tmux" >&2
+    echo "    macOS: brew install tmux" >&2
+    echo "  Or run devmux settings → 'Setup remote host' to auto-install" >&2
     exit 1
 fi
 
@@ -290,15 +329,21 @@ if [[ "$MODE" == "resume" && -n "${SESSION_BASE_LEGACY:-}" ]]; then
     fi
 fi
 
+debug "Shell CMD: ${SHELL_CMD:-'(none)'}"
+
 if [[ -n "$SHELL_CMD" ]]; then
     if [[ "$MODE" == "resume" ]]; then
+        debug "Executing: tmux new-session -A -s '$SESSION' -c '$PROJECT_DIR'"
         # -A: attach if it exists, otherwise create (avoids "duplicate session" races)
         exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
     fi
+    debug "Executing: tmux new-session -s '$SESSION' -c '$PROJECT_DIR'"
     exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
 fi
 
 if [[ "$MODE" == "resume" ]]; then
+    debug "Executing: tmux new-session -A -s '$SESSION' -c '$PROJECT_DIR'"
     exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR"
 fi
+debug "Executing: tmux new-session -s '$SESSION' -c '$PROJECT_DIR'"
 exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"

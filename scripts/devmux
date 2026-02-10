@@ -175,6 +175,101 @@ local_remote_script() {
     return 1
 }
 
+# ── SSH with retry ─────────────────────────────────────────────────
+ssh_with_retry() {
+    local max_retries=2
+    local delay=3
+    local attempt=0
+    local exit_code=0
+    
+    while [[ $attempt -le $max_retries ]]; do
+        if [[ $attempt -gt 0 ]]; then
+            echo "  Retry $attempt/$max_retries in ${delay}s..." >&2
+            sleep $delay
+        fi
+        
+        # shellcheck disable=SC2086
+        ssh $SSH_OPTS "$@"
+        exit_code=$?
+        
+        if [[ $exit_code -eq 0 ]]; then
+            return 0
+        fi
+        
+        ((attempt++))
+    done
+    
+    return $exit_code
+}
+
+# ── Pre-flight connectivity check ──────────────────────────────────
+preflight_check() {
+    local ssh_target="$1"
+    
+    # Skip if --fast flag was used
+    if $SKIP_PREFLIGHT; then
+        return 0
+    fi
+    
+    # Quick connectivity test (3 second timeout)
+    if ! ssh $SSH_OPTS -o ConnectTimeout=3 -o BatchMode=yes "$ssh_target" exit 2>/dev/null; then
+        die "Pre-flight check failed: Cannot connect to $HOST ($ssh_target)
+  The host may be offline or SSH keys not configured.
+  Use --fast to skip this check."
+    fi
+    
+    return 0
+}
+
+# ── Config validation ──────────────────────────────────────────────
+validate_config() {
+    local errors=0
+    
+    # Check that HOSTS array is defined and not empty
+    if [[ ${#HOSTS[@]} -eq 0 ]]; then
+        echo "Warning: No HOSTS defined in config." >&2
+        ((errors++))
+    fi
+    
+    # Check that each host has required variables
+    for host in "${HOSTS[@]}"; do
+        local ssh_var="HOST_${host//-/_}_SSH"
+        if [[ -z "${!ssh_var:-}" ]]; then
+            echo "Error: HOST_${host//-/_}_SSH is not set for host '$host'" >&2
+            ((errors++))
+        fi
+    done
+    
+    # Check that TOOLS array is defined and not empty
+    if [[ ${#TOOLS[@]} -eq 0 ]]; then
+        echo "Warning: No TOOLS defined in config. Using default 'shell'" >&2
+    fi
+    
+    # Verify TOOL_*_CMD variables exist for each tool
+    for tool in "${TOOLS[@]}"; do
+        local cmd_var="TOOL_${tool}_CMD"
+        if ! declare -p "$cmd_var" &>/dev/null; then
+            echo "Warning: TOOL_${tool}_CMD is not set for tool '$tool'" >&2
+        fi
+    done
+    
+    if [[ $errors -gt 0 ]]; then
+        echo "Config validation failed with $errors error(s)." >&2
+        echo "Please check your config at ~/.config/devmux/devmux.conf" >&2
+        return 1
+    fi
+    
+    return 0
+}
+
+# ── Debug mode ────────────────────────────────────────────────────
+DEBUG_MODE="${DEVMUX_DEBUG:-false}"
+debug() {
+    if [[ "$DEBUG_MODE" == "true" ]]; then
+        echo "[DEBUG] $*" >&2
+    fi
+}
+
 # ── Defaults (overridden by config) ───────────────────────────────
 HOSTS=()
 TOOLS=("shell")
@@ -193,6 +288,7 @@ Options:
   --tool <name>       Skip tool picker
   --mode <resume|new> Skip mode picker
   --settings          Open settings menu
+  --fast              Skip pre-flight connectivity check
   -h, --help          Show this help
 
 Subcommands:
@@ -218,8 +314,11 @@ fi
 # shellcheck source=/dev/null
 source "$CONFIG_FILE"
 
+# Validate config
+validate_config || exit 1
+
 # ── Parse CLI overrides ───────────────────────────────────────────
-ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE="" ARG_SETTINGS=false
+ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE="" ARG_SETTINGS=false SKIP_PREFLIGHT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)     ARG_HOST="$2"; shift 2 ;;
@@ -227,6 +326,7 @@ while [[ $# -gt 0 ]]; do
         --tool)     ARG_TOOL="$2"; shift 2 ;;
         --mode)     ARG_MODE="$2"; shift 2 ;;
         --settings) ARG_SETTINGS=true; shift ;;
+        --fast)     SKIP_PREFLIGHT=true; shift ;;
         settings)   ARG_SETTINGS=true; shift ;;
         -h|--help)  usage; exit 0 ;;
         *)          die "Unknown option: $1" ;;
@@ -272,16 +372,29 @@ if should_run_local "$SSH_TARGET" "$SELF_TS_IP"; then
     LOCAL_MODE=true
 fi
 
+debug "Host: $HOST"
+debug "SSH Target: $SSH_TARGET"
+debug "Local Mode: $LOCAL_MODE"
+debug "Projects Dir: $PROJECTS_DIR"
+
+# ── Pre-flight connectivity check (skipped in local mode) ─────────
+if ! $LOCAL_MODE; then
+    preflight_check "$SSH_TARGET"
+fi
+
 # ── Step 2: Fetch remote project list ─────────────────────────────
 REMOTE_LS_CMD="ls -1 ${PROJECTS_DIR} 2>/dev/null || true"
 if $LOCAL_MODE; then
     PROJECT_LIST=""
     PROJECT_LIST=$(spin "Loading projects (local)..." bash -lc "$REMOTE_LS_CMD" 2>/dev/null) || \
-        die "Could not list projects locally. Check that your projects directory exists."
+        die "Failed to list projects in local directory: $PROJECTS_DIR
+  Check that the directory exists and is readable."
+
 else
     if [[ -n "$WSL_PREFIX" ]]; then
-        remote_ls_escaped="${REMOTE_LS_CMD//\"/\\\"}"
-        REMOTE_CMD="$WSL_PREFIX \"${remote_ls_escaped}\""
+        # Use base64 encoding to safely pass the command through WSL
+        remote_ls_b64=$(echo "$REMOTE_LS_CMD" | base64 -w0)
+        REMOTE_CMD="$WSL_PREFIX bash -c 'echo $remote_ls_b64 | base64 -d | bash'"
     else
         REMOTE_CMD="$REMOTE_LS_CMD"
     fi
@@ -289,12 +402,37 @@ else
     PROJECT_LIST=""
     # shellcheck disable=SC2086
     PROJECT_LIST=$(spin "Connecting to $HOST ($SSH_TARGET)..." \
-        ssh $SSH_OPTS -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
-        die "Could not connect to $SSH_TARGET. Check SSH config and connectivity."
+        ssh_with_retry -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
+        die "SSH connection failed to $HOST ($SSH_TARGET) after 3 attempts
+  Troubleshooting:
+    1. Verify the host is online: ping $SSH_TARGET
+    2. Check SSH config: ssh -G $HOST | grep hostname
+    3. Test manually: ssh -v $SSH_TARGET echo 'OK'
+    4. Verify SSH key is authorized on the remote host"
 fi
 
 if [[ -z "$PROJECT_LIST" ]]; then
-    die "No projects found on $HOST under $PROJECTS_DIR."
+    warn "No projects found on $HOST in $PROJECTS_DIR"
+    
+    if $LOCAL_MODE; then
+        if confirm "Create a sample project?"; then
+            mkdir -p "$HOME/projects/my-project"
+            echo "# My Project" > "$HOME/projects/my-project/README.md"
+            ok "Created $HOME/projects/my-project with README.md"
+            PROJECT_LIST="my-project"
+        else
+            die "Cannot continue without projects. Create one manually or update config."
+        fi
+    else
+        if confirm "Create a sample project on $HOST?"; then
+            # Create project on remote host
+            ssh $SSH_OPTS "$SSH_TARGET" "mkdir -p $PROJECTS_DIR/my-project && echo '# My Project' > $PROJECTS_DIR/my-project/README.md"
+            ok "Created sample project 'my-project' on $HOST"
+            PROJECT_LIST="my-project"
+        else
+            die "Cannot continue without projects. Create one manually or update config."
+        fi
+    fi
 fi
 
 mapfile -t PROJECTS <<< "$PROJECT_LIST"
@@ -318,6 +456,10 @@ fi
 
 TOOL_CMD=$(get_var "TOOL_${TOOL}_CMD")
 
+debug "Project: $PROJECT"
+debug "Tool: $TOOL"
+debug "Tool CMD: $TOOL_CMD"
+
 # ── Step 4: Choose mode ──────────────────────────────────────────
 if [[ -n "$ARG_MODE" ]]; then
     MODE="$ARG_MODE"
@@ -336,18 +478,24 @@ for arg in "${REMOTE_ARGV[@]}"; do
     REMOTE_ARGS_Q+=" $(printf '%q' "$arg")"
 done
 REMOTE_EXEC="$REMOTE_SCRIPT$REMOTE_ARGS_Q"
+
+debug "Mode: $MODE"
+debug "Remote exec: $REMOTE_EXEC"
+
 if $LOCAL_MODE; then
     LOCAL_REMOTE_SCRIPT="$(local_remote_script "$REMOTE_SCRIPT" "$REPO_DIR")" || \
         die "Local run requested but devmux-remote not found. Run setup.sh on this host."
 else
     if [[ -n "$WSL_PREFIX" ]]; then
-        # Windows uses cmd-style quoting; wrap the bash command in double quotes.
-        remote_exec_escaped="${REMOTE_EXEC//\"/\\\"}"
-        FULL_CMD="$WSL_PREFIX \"${remote_exec_escaped}\""
+        # Use base64 encoding to safely pass the command through WSL
+        remote_exec_b64=$(echo "$REMOTE_EXEC" | base64 -w0)
+        FULL_CMD="$WSL_PREFIX bash -c 'echo $remote_exec_b64 | base64 -d | bash'"
     else
         FULL_CMD="$REMOTE_EXEC"
     fi
 fi
+
+debug "Full command: $FULL_CMD"
 
 header "→ $HOST / $PROJECT / $TOOL ($MODE)"
 if $LOCAL_MODE; then
