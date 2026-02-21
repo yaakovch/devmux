@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # devmux — interactive SSH + tmux launcher.
-# Connects to a remote host, picks a project, tool, and tmux mode.
+# Connects to a remote host, picks a project, and manages tmux sessions.
 set -euo pipefail
 
 # ── Locate repo and source libraries ─────────────────────────────
@@ -240,19 +240,6 @@ validate_config() {
         fi
     done
     
-    # Check that TOOLS array is defined and not empty
-    if [[ ${#TOOLS[@]} -eq 0 ]]; then
-        echo "Warning: No TOOLS defined in config. Using default 'shell'" >&2
-    fi
-    
-    # Verify TOOL_*_CMD variables exist for each tool
-    for tool in "${TOOLS[@]}"; do
-        local cmd_var="TOOL_${tool}_CMD"
-        if ! declare -p "$cmd_var" &>/dev/null; then
-            echo "Warning: TOOL_${tool}_CMD is not set for tool '$tool'" >&2
-        fi
-    done
-    
     if [[ $errors -gt 0 ]]; then
         echo "Config validation failed with $errors error(s)." >&2
         echo "Please check your config at ~/.config/devmux/devmux.conf" >&2
@@ -272,27 +259,24 @@ debug() {
 
 # ── Defaults (overridden by config) ───────────────────────────────
 HOSTS=()
-TOOLS=("shell")
-TOOL_shell_CMD=""
 
 # ── Usage ──────────────────────────────────────────────────────────
 usage() {
     cat <<'EOF'
 Usage: devmux [OPTIONS]
 
-Interactive menu to SSH into a host, pick a project, tool, and tmux session.
+Interactive menu to SSH into a host, pick a project, and manage tmux sessions.
 
 Options:
-  --host <name>       Skip host picker
-  --project <name>    Skip project picker
-  --tool <name>       Skip tool picker
-  --mode <resume|new> Skip mode picker
-  --settings          Open settings menu
-  --fast              Skip pre-flight connectivity check
-  -h, --help          Show this help
+  --host <name>         Skip host picker
+  --project <name>      Skip project picker
+  --session <name|new>  Attach to a session by name, or "new" to create one
+  --settings            Open settings menu
+  --fast                Skip pre-flight connectivity check
+  -h, --help            Show this help
 
 Subcommands:
-  settings            Open settings menu (same as --settings)
+  settings              Open settings menu (same as --settings)
 
 Config: ~/.config/devmux/devmux.conf
 EOF
@@ -318,13 +302,12 @@ source "$CONFIG_FILE"
 validate_config || exit 1
 
 # ── Parse CLI overrides ───────────────────────────────────────────
-ARG_HOST="" ARG_PROJECT="" ARG_TOOL="" ARG_MODE="" ARG_SETTINGS=false SKIP_PREFLIGHT=false
+ARG_HOST="" ARG_PROJECT="" ARG_SESSION="" ARG_SETTINGS=false SKIP_PREFLIGHT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)     ARG_HOST="$2"; shift 2 ;;
         --project)  ARG_PROJECT="$2"; shift 2 ;;
-        --tool)     ARG_TOOL="$2"; shift 2 ;;
-        --mode)     ARG_MODE="$2"; shift 2 ;;
+        --session)  ARG_SESSION="$2"; shift 2 ;;
         --settings) ARG_SETTINGS=true; shift ;;
         --fast)     SKIP_PREFLIGHT=true; shift ;;
         settings)   ARG_SETTINGS=true; shift ;;
@@ -445,34 +428,12 @@ else
     PROJECT=$(pick "Project:" "${PROJECTS[@]}")
 fi
 
-# ── Step 3: Choose tool ──────────────────────────────────────────
-if [[ ${#TOOLS[@]} -eq 0 ]]; then
-    die "No TOOLS defined in config."
-fi
-
-if [[ -n "$ARG_TOOL" ]]; then
-    TOOL="$ARG_TOOL"
-else
-    TOOL=$(pick "Tool:" "${TOOLS[@]}")
-fi
-
-TOOL_CMD=$(get_var "TOOL_${TOOL}_CMD")
-
 debug "Project: $PROJECT"
-debug "Tool: $TOOL"
-debug "Tool CMD: $TOOL_CMD"
 
-# ── Step 4: Choose mode ──────────────────────────────────────────
-if [[ -n "$ARG_MODE" ]]; then
-    MODE="$ARG_MODE"
-else
-    MODE=$(pick "Mode:" "resume" "new")
-fi
-
-# ── Step 5: Connect ──────────────────────────────────────────────
-REMOTE_ARGV=(--project "$PROJECT" --tool "$TOOL" --mode "$MODE")
-if [[ -n "$TOOL_CMD" ]]; then
-    REMOTE_ARGV+=(--tool-cmd "$TOOL_CMD")
+# ── Step 3: Connect ──────────────────────────────────────────────
+REMOTE_ARGV=(--project "$PROJECT")
+if [[ -n "$ARG_SESSION" ]]; then
+    REMOTE_ARGV+=(--session "$ARG_SESSION")
 fi
 
 REMOTE_ARGS_Q=""
@@ -481,7 +442,6 @@ for arg in "${REMOTE_ARGV[@]}"; do
 done
 REMOTE_EXEC="$REMOTE_SCRIPT$REMOTE_ARGS_Q"
 
-debug "Mode: $MODE"
 debug "Remote exec: $REMOTE_EXEC"
 
 if $LOCAL_MODE; then
@@ -497,7 +457,7 @@ else
     fi
 fi
 
-header "→ $HOST / $PROJECT / $TOOL ($MODE)"
+header "→ $HOST / $PROJECT"
 if $LOCAL_MODE; then
     exec "$LOCAL_REMOTE_SCRIPT" "${REMOTE_ARGV[@]}"
 else

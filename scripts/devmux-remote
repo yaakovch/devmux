@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # devmux-remote — runs on the host inside WSL/Linux.
-# Manages tmux sessions for a given project + tool.
+# Manages tmux sessions for a given project.
 set -euo pipefail
 
 # ── Debug mode ─────────────────────────────────────────────────────
@@ -54,6 +54,31 @@ resolve_path() {
 
 SCRIPT_PATH="$(resolve_path "$0")"
 REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
+
+# ── Source common library ─────────────────────────────────────────
+if [[ -f "$REPO_DIR/lib/common.sh" ]]; then
+    source "$REPO_DIR/lib/common.sh"
+else
+    # Minimal fallbacks if running outside repo
+    die() { echo "Error: $*" >&2; exit 1; }
+    pick() {
+        local prompt="$1"; shift
+        local items=("$@")
+        echo "$prompt" >&2
+        local i
+        for i in "${!items[@]}"; do
+            echo "  $((i+1))) ${items[$i]}" >&2
+        done
+        while true; do
+            read -rp "#? " choice
+            if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#items[@]} )); then
+                echo "${items[$((choice-1))]}"
+                return
+            fi
+            echo "Invalid choice. Enter 1-${#items[@]}." >&2
+        done
+    }
+fi
 
 # ── Optional self-update (git pull) ───────────────────────────────
 _devmux_remote_self_update() {
@@ -197,32 +222,29 @@ _devmux_remote_self_update "$REPO_DIR" "$SCRIPT_PATH" "$@"
 
 # ── Defaults ───────────────────────────────────────────────────────
 PROJECT=""
-TOOL=""
-TOOL_CMD=""
-MODE="resume"
+SESSION_ARG=""
 
 # ── Usage ──────────────────────────────────────────────────────────
 usage() {
     cat <<'EOF'
-Usage: devmux-remote --project <name> --tool <name> [--tool-cmd <cmd>] --mode <resume|new>
+Usage: devmux-remote --project <name> [--session <name|new>]
 
 Options:
-  --project <name>    Project folder name under ~/projects
-  --tool <name>       Tool nickname (used in session name)
-  --tool-cmd <cmd>    Command to run inside tmux (empty = bash)
-  --mode <resume|new> resume: attach existing or create; new: always create
-  --list-projects     List project folders and exit
-  -h, --help          Show this help
+  --project <name>       Project folder name under ~/projects
+  --session <name|new>   Attach to a session by name, or "new" to create one
+  --list-projects        List project folders and exit
+  --list-sessions        List sessions for a project (requires --project)
+  -h, --help             Show this help
 EOF
 }
 
 # ── Parse args ─────────────────────────────────────────────────────
+LIST_SESSIONS=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --project)  PROJECT="$2"; shift 2 ;;
-        --tool)     TOOL="$2"; shift 2 ;;
-        --tool-cmd) TOOL_CMD="$2"; shift 2 ;;
-        --mode)     MODE="$2"; shift 2 ;;
+        --session)  SESSION_ARG="$2"; shift 2 ;;
+        --list-sessions) LIST_SESSIONS=true; shift ;;
         --list-projects)
             # Find projects dir and list
             if [[ -d "$HOME/projects" ]]; then
@@ -238,29 +260,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Validate ───────────────────────────────────────────────────────
-if [[ -z "$PROJECT" || -z "$TOOL" ]]; then
-    echo "Error: --project and --tool are required." >&2
+if [[ -z "$PROJECT" ]]; then
+    echo "Error: --project is required." >&2
     usage >&2
     exit 1
 fi
 
-if [[ "$MODE" != "resume" && "$MODE" != "new" ]]; then
-    echo "Error: --mode must be 'resume' or 'new'." >&2
+# ── Validate and sanitize PROJECT name ─────────────────────────────
+if [[ "$PROJECT" =~ [[:cntrl:]] ]]; then
+    echo "Error: PROJECT name cannot contain control characters or newlines." >&2
     exit 1
 fi
 
-# ── Validate and sanitize PROJECT and TOOL names ───────────────────
-# Check for invalid characters (newlines, control chars)
-if [[ "$PROJECT" =~ [[:cntrl:]] || "$TOOL" =~ [[:cntrl:]] ]]; then
-    echo "Error: PROJECT and TOOL names cannot contain control characters or newlines." >&2
-    exit 1
-fi
-
-# Auto-sanitize spaces to dashes
-if [[ "$PROJECT" =~ [[:space:]] || "$TOOL" =~ [[:space:]] ]]; then
-    echo "Warning: Spaces in PROJECT/TOOL names will be converted to dashes." >&2
+if [[ "$PROJECT" =~ [[:space:]] ]]; then
+    echo "Warning: Spaces in PROJECT name will be converted to dashes." >&2
     PROJECT="${PROJECT//[[:space:]]/-}"
-    TOOL="${TOOL//[[:space:]]/-}"
 fi
 
 # ── Resolve project directory ──────────────────────────────────────
@@ -279,71 +293,178 @@ else
     exit 1
 fi
 
-# ── Session name ───────────────────────────────────────────────────
-# Sanitize for tmux (replace dots/colons with dashes)
-SAFE_PROJECT="${PROJECT//[.:]/-}"
-SAFE_TOOL="${TOOL//[.:]/-}"
+# Sanitize project name for tmux (replace dots with dashes; colons are used as delimiter)
+SAFE_PROJECT="${PROJECT//\./-}"
 
-if [[ "$MODE" == "resume" ]]; then
-    SESSION_BASE_PRIMARY="${SAFE_TOOL}:${SAFE_PROJECT}"
-    SESSION_BASE_LEGACY="${SAFE_TOOL}_${SAFE_PROJECT}"
-    SESSION="$SESSION_BASE_PRIMARY"
-else
-    SESSION_BASE_PRIMARY="${SAFE_TOOL}:${SAFE_PROJECT}"
-    SESSION_BASE_LEGACY=""
-    SESSION="${SESSION_BASE_PRIMARY}:$(date +%s%N | cut -c1-16)"
-fi
-
-debug "Project: $PROJECT"
-debug "Tool: $TOOL"
-debug "Mode: $MODE"
-debug "Session: $SESSION"
-debug "Project Dir: $PROJECT_DIR"
-debug "Tool CMD: ${TOOL_CMD:-'(none)'}"
-
-# ── Build tmux command ─────────────────────────────────────────────
-if [[ -n "$TOOL_CMD" ]]; then
-    SHELL_CMD="bash -lc '${TOOL_CMD//\'/\'\\\'\'}; exec bash -l'"
-else
-    SHELL_CMD=""
-fi
-
-# Ensure tmux is available
+# ── Ensure tmux is available ──────────────────────────────────────
 if ! command -v tmux &>/dev/null; then
     echo "Error: tmux is not installed on this host." >&2
     echo "  Install it with your package manager:" >&2
     echo "    Ubuntu/Debian: sudo apt install tmux" >&2
     echo "    Arch: sudo pacman -S tmux" >&2
     echo "    macOS: brew install tmux" >&2
-    echo "  Or run devmux settings → 'Setup remote host' to auto-install" >&2
+    echo "  Or run devmux settings -> 'Setup remote host' to auto-install" >&2
     exit 1
 fi
 
-# Backward-compat: older devmux versions used <tool>_<project> for sessions.
-# If the new name doesn't exist but the legacy one does, attach the legacy.
-if [[ "$MODE" == "resume" && -n "${SESSION_BASE_LEGACY:-}" ]]; then
-    if tmux has-session -t "=$SESSION_BASE_PRIMARY" 2>/dev/null; then
-        SESSION="$SESSION_BASE_PRIMARY"
-    elif tmux has-session -t "=$SESSION_BASE_LEGACY" 2>/dev/null; then
-        SESSION="$SESSION_BASE_LEGACY"
+# ── Session helpers ───────────────────────────────────────────────
+
+# List all tmux sessions belonging to this project.
+# Matches 3 formats:
+#   - project:N        (new format)
+#   - tool:project     (legacy)
+#   - tool:project:ts  (legacy with timestamp)
+# Output: one line per session — "name|created|activity"
+list_project_sessions() {
+    local project="$1"
+    local raw
+    raw=$(tmux list-sessions -F "#{session_name}|#{session_created}|#{session_activity}" 2>/dev/null) || return 0
+
+    local line name
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        name="${line%%|*}"
+        # New format: project:N
+        if [[ "$name" =~ ^${project}:[0-9]+$ ]]; then
+            echo "$line"
+            continue
+        fi
+        # Legacy format: tool:project  (exactly two parts)
+        if [[ "$name" =~ ^[^:]+:${project}$ ]]; then
+            echo "$line"
+            continue
+        fi
+        # Legacy format: tool:project:timestamp
+        if [[ "$name" =~ ^[^:]+:${project}:[0-9]+$ ]]; then
+            echo "$line"
+            continue
+        fi
+    done <<< "$raw"
+}
+
+# Find the next session number for this project (max existing N + 1).
+next_session_number() {
+    local project="$1"
+    local max=0
+    local sessions
+    sessions=$(list_project_sessions "$project")
+
+    local line name num
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        name="${line%%|*}"
+        if [[ "$name" =~ ^${project}:([0-9]+)$ ]]; then
+            num="${BASH_REMATCH[1]}"
+            if (( num > max )); then
+                max=$num
+            fi
+        fi
+    done <<< "$sessions"
+
+    echo $(( max + 1 ))
+}
+
+# Format a timestamp (epoch) as a human-readable relative or absolute time.
+format_time() {
+    local epoch="$1"
+    local now
+    now=$(date +%s 2>/dev/null || echo 0)
+    local diff=$(( now - epoch ))
+
+    if (( diff < 60 )); then
+        echo "just now"
+    elif (( diff < 3600 )); then
+        echo "$(( diff / 60 ))m ago"
+    elif (( diff < 86400 )); then
+        echo "$(( diff / 3600 ))h ago"
+    elif (( diff < 604800 )); then
+        echo "$(( diff / 86400 ))d ago"
+    else
+        date -d "@$epoch" "+%Y-%m-%d" 2>/dev/null || date -r "$epoch" "+%Y-%m-%d" 2>/dev/null || echo "$epoch"
+    fi
+}
+
+# ── Handle --list-sessions ────────────────────────────────────────
+if $LIST_SESSIONS; then
+    list_project_sessions "$SAFE_PROJECT"
+    exit 0
+fi
+
+debug "Project: $PROJECT"
+debug "Project Dir: $PROJECT_DIR"
+debug "Session Arg: ${SESSION_ARG:-'(none)'}"
+
+# ── Session selection ─────────────────────────────────────────────
+SESSION=""
+
+if [[ -n "$SESSION_ARG" ]]; then
+    # Direct session selection via CLI arg
+    if [[ "$SESSION_ARG" == "new" ]]; then
+        NEXT_NUM=$(next_session_number "$SAFE_PROJECT")
+        SESSION="${SAFE_PROJECT}:${NEXT_NUM}"
+        debug "Creating new session: $SESSION"
+        exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"
+    else
+        # Attach to named session
+        SESSION="$SESSION_ARG"
+        debug "Attaching to session: $SESSION"
+        if tmux has-session -t "=$SESSION" 2>/dev/null; then
+            exec tmux attach-session -t "=$SESSION"
+        else
+            echo "Error: Session '$SESSION' not found." >&2
+            exit 1
+        fi
     fi
 fi
 
-debug "Shell CMD: ${SHELL_CMD:-'(none)'}"
+# ── Interactive session picker ────────────────────────────────────
+SESSION_DATA=$(list_project_sessions "$SAFE_PROJECT")
 
-if [[ -n "$SHELL_CMD" ]]; then
-    if [[ "$MODE" == "resume" ]]; then
-        debug "Executing: tmux new-session -A -s '$SESSION' -c '$PROJECT_DIR'"
-        # -A: attach if it exists, otherwise create (avoids "duplicate session" races)
-        exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
+# Build picker items
+PICKER_ITEMS=()
+SESSION_NAMES=()
+
+# Always offer "new session" first
+PICKER_ITEMS+=("+ New session")
+SESSION_NAMES+=("__new__")
+
+# Add existing sessions with formatted info
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    IFS='|' read -r name created activity <<< "$line"
+    created_fmt=$(format_time "$created")
+    activity_fmt=$(format_time "$activity")
+    PICKER_ITEMS+=("$name  (created $created_fmt, active $activity_fmt)")
+    SESSION_NAMES+=("$name")
+done <<< "$SESSION_DATA"
+
+if [[ ${#PICKER_ITEMS[@]} -eq 1 ]]; then
+    # No existing sessions — create one directly
+    NEXT_NUM=$(next_session_number "$SAFE_PROJECT")
+    SESSION="${SAFE_PROJECT}:${NEXT_NUM}"
+    debug "No existing sessions, creating: $SESSION"
+    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"
+fi
+
+# Show the picker
+CHOICE=$(pick "Session:" "${PICKER_ITEMS[@]}")
+
+# Find which session was picked
+PICKED_SESSION=""
+for i in "${!PICKER_ITEMS[@]}"; do
+    if [[ "${PICKER_ITEMS[$i]}" == "$CHOICE" ]]; then
+        PICKED_SESSION="${SESSION_NAMES[$i]}"
+        break
     fi
-    debug "Executing: tmux new-session -s '$SESSION' -c '$PROJECT_DIR'"
-    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR" "$SHELL_CMD"
-fi
+done
 
-if [[ "$MODE" == "resume" ]]; then
-    debug "Executing: tmux new-session -A -s '$SESSION' -c '$PROJECT_DIR'"
-    exec tmux new-session -A -s "$SESSION" -c "$PROJECT_DIR"
+if [[ "$PICKED_SESSION" == "__new__" ]]; then
+    NEXT_NUM=$(next_session_number "$SAFE_PROJECT")
+    SESSION="${SAFE_PROJECT}:${NEXT_NUM}"
+    debug "Creating new session: $SESSION"
+    exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"
+else
+    SESSION="$PICKED_SESSION"
+    debug "Attaching to session: $SESSION"
+    exec tmux attach-session -t "=$SESSION"
 fi
-debug "Executing: tmux new-session -s '$SESSION' -c '$PROJECT_DIR'"
-exec tmux new-session -s "$SESSION" -c "$PROJECT_DIR"

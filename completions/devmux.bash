@@ -6,10 +6,10 @@ _devmux_completions() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    
+
     # Options
-    opts="--host --project --tool --mode --settings --fast -h --help"
-    
+    opts="--host --project --session --settings --fast -h --help"
+
     case "${prev}" in
         --host)
             # Complete with hosts from config
@@ -25,16 +25,12 @@ _devmux_completions() {
             fi
             return 0
             ;;
-        --mode)
-            COMPREPLY=( $(compgen -W "resume new" -- "${cur}") )
-            return 0
-            ;;
-        --tool)
-            COMPREPLY=( $(compgen -W "shell claude codex" -- "${cur}") )
+        --session)
+            COMPREPLY=( $(compgen -W "new" -- "${cur}") )
             return 0
             ;;
     esac
-    
+
     # Default: complete with options and subcommands
     COMPREPLY=( $(compgen -W "${opts} settings" -- "${cur}") )
 }

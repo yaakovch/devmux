@@ -5,13 +5,12 @@
 _devmux() {
     local curcontext="$curcontext" state line
     typeset -A opt_args
-    
+
     _arguments -C \
         '(-h --help)'{-h,--help}'[Show help]' \
         '--host[Host to connect to]:host:_devmux_hosts' \
         '--project[Project to open]:project:_devmux_projects' \
-        '--tool[Tool to use]:tool:(shell claude codex)' \
-        '--mode[Session mode]:mode:(resume new)' \
+        '--session[Session to attach or "new"]:session:(new)' \
         '--settings[Open settings menu]' \
         '--fast[Skip pre-flight check]' \
         '1: :_devmux_subcommands'

@@ -164,11 +164,13 @@ _generate_devmux_conf() {
 HOSTS=($(printf '"%s" ' "${hosts[@]}"))
 
 $(echo -e "$host_lines")
-# ── Tools ──────────────────────────────────────────────────────────
-TOOLS=("codex" "claude" "shell")
-TOOL_codex_CMD="codex"
-TOOL_claude_CMD="claude"
-TOOL_shell_CMD=""
+# ── Preferences ────────────────────────────────────────────────────
+# Path to devmux-remote on the remote host.
+# Default: devmux-remote (found via PATH, typically ~/.local/bin).
+# REMOTE_SCRIPT="devmux-remote"
+
+# Extra SSH options (e.g. "-o ConnectTimeout=5").
+# SSH_OPTS=""
 EOF
 }
 
