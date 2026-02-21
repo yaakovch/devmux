@@ -447,7 +447,7 @@ if [[ ${#PICKER_ITEMS[@]} -eq 1 ]]; then
 fi
 
 # Show the picker
-CHOICE=$(pick "Session:" "${PICKER_ITEMS[@]}")
+CHOICE=$(pick "Session:" "${PICKER_ITEMS[@]}") || exit 0
 
 # Find which session was picked
 PICKED_SESSION=""
@@ -457,6 +457,11 @@ for i in "${!PICKER_ITEMS[@]}"; do
         break
     fi
 done
+
+if [[ -z "$PICKED_SESSION" ]]; then
+    echo "Error: No session selected." >&2
+    exit 1
+fi
 
 if [[ "$PICKED_SESSION" == "__new__" ]]; then
     NEXT_NUM=$(next_session_number "$SAFE_PROJECT")

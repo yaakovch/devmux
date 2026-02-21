@@ -449,9 +449,11 @@ if $LOCAL_MODE; then
         die "Local run requested but devmux-remote not found. Run setup.sh on this host."
 else
     if [[ -n "$WSL_PREFIX" ]]; then
-        # Double quotes protect pipes from Windows CMD interpretation
+        # Double quotes protect special chars from Windows CMD interpretation.
+        # Use process substitution <() so bash reads the script from a fd,
+        # keeping stdin free for interactive input (e.g. session picker).
         remote_exec_b64=$(echo "$REMOTE_EXEC" | base64 -w0)
-        FULL_CMD="$WSL_PREFIX bash -lc \"echo $remote_exec_b64 | base64 -d | bash\""
+        FULL_CMD="$WSL_PREFIX bash -lc \"bash <(echo $remote_exec_b64 | base64 -d)\""
     else
         FULL_CMD="$REMOTE_EXEC"
     fi
