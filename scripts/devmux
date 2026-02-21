@@ -497,12 +497,11 @@ else
     fi
 fi
 
-debug "Full command: $FULL_CMD"
-
 header "→ $HOST / $PROJECT / $TOOL ($MODE)"
 if $LOCAL_MODE; then
     exec "$LOCAL_REMOTE_SCRIPT" "${REMOTE_ARGV[@]}"
 else
+    debug "Full command: $FULL_CMD"
     # shellcheck disable=SC2086
     exec ssh $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"
 fi
