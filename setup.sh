@@ -343,9 +343,18 @@ if $IS_CLIENT; then
         info "  To regenerate: bash setup.sh --regen-config"
     fi
 
+    # Detect Tailscale CLI for keyless SSH
+    TS_CLI="$(find_tailscale_cli || true)"
+    if [[ -n "$TS_CLI" ]]; then
+        info "  Tailscale CLI found: $TS_CLI"
+        info "  SSH config will use Tailscale SSH (no keys needed)"
+    else
+        info "  Tailscale CLI not found — using traditional SSH (keys required)"
+    fi
+
     # Generate SSH config
     info "  Generating SSH config entries..."
-    ssh_config_content=$(generate_ssh_config)
+    ssh_config_content=$(generate_ssh_config "$TS_CLI")
     if [[ -n "$ssh_config_content" ]]; then
         write_ssh_config "$ssh_config_content"
         info "  Updated ~/.ssh/config (devmux-managed block)"
@@ -366,76 +375,83 @@ if [[ -f "$PUB_KEY_PATH" ]]; then
     info "  $PUB_KEY_CONTENT"
 
     if $IS_CLIENT; then
-        info ""
-        header "Key distribution"
-        for machine in "${MACHINES[@]}"; do
-            [[ "$machine" == "$THIS_MACHINE" ]] && continue
-
-            m_prefix="MACHINE_${machine//-/_}"
-            m_os_var="${m_prefix}_OS"
-            m_os="${!m_os_var:-linux}"
-            m_ts_ip_var="${m_prefix}_TAILSCALE_IP"
-            m_ts_ip="${!m_ts_ip_var:-}"
-            m_win_user_var="${m_prefix}_WIN_USER"
-            m_win_user="${!m_win_user_var:-}"
-
-            [[ -z "$m_ts_ip" ]] && continue
-
+        if [[ -n "${TS_CLI:-}" ]]; then
+            # Using Tailscale SSH — no key distribution needed
             info ""
-            info "  Machine: $machine ($m_ts_ip)"
+            info "  ✓ Using Tailscale SSH — SSH key distribution is not needed."
+            info "  Ensure Tailscale SSH is enabled on each host (tailscale up --ssh)."
+        else
+            info ""
+            header "Key distribution"
+            for machine in "${MACHINES[@]}"; do
+                [[ "$machine" == "$THIS_MACHINE" ]] && continue
 
-            if [[ "$m_os" == "windows-wsl" ]]; then
-                # Windows host — need to deploy to admin authorized_keys
-                info "  This is a Windows host. Key must go to administrators_authorized_keys."
+                m_prefix="MACHINE_${machine//-/_}"
+                m_os_var="${m_prefix}_OS"
+                m_os="${!m_os_var:-linux}"
+                m_ts_ip_var="${m_prefix}_TAILSCALE_IP"
+                m_ts_ip="${!m_ts_ip_var:-}"
+                m_win_user_var="${m_prefix}_WIN_USER"
+                m_win_user="${!m_win_user_var:-}"
 
-                # Try SSH if it already works
-                if ssh -o ConnectTimeout=5 -o BatchMode=yes "${m_win_user}@${m_ts_ip}" "echo ok" &>/dev/null 2>&1; then
-                    if confirm "  SSH works to $machine. Deploy key automatically?"; then
-                        if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
-                            info "  Key deployed to $machine."
-                        else
-                            info "  Automatic key deployment failed."
-                            info "  Run these commands on that Windows machine:"
-                            deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                [[ -z "$m_ts_ip" ]] && continue
+
+                info ""
+                info "  Machine: $machine ($m_ts_ip)"
+
+                if [[ "$m_os" == "windows-wsl" ]]; then
+                    # Windows host — need to deploy to admin authorized_keys
+                    info "  This is a Windows host. Key must go to administrators_authorized_keys."
+
+                    # Try SSH if it already works
+                    if ssh -o ConnectTimeout=5 -o BatchMode=yes "${m_win_user}@${m_ts_ip}" "echo ok" &>/dev/null 2>&1; then
+                        if confirm "  SSH works to $machine. Deploy key automatically?"; then
+                            if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
+                                info "  Key deployed to $machine."
+                            else
+                                info "  Automatic key deployment failed."
+                                info "  Run these commands on that Windows machine:"
+                                deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+                            fi
                         fi
-                    fi
-                else
-                    info "  SSH not yet working to $machine."
-                    info "  Run these commands on that Windows machine:"
-                    deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
-
-                    if [[ "$TRY_WINDOWS_PASSWORD_DEPLOY" == "true" ]] && \
-                       confirm "  Try deploying key over SSH now anyway? (password prompt expected)"; then
-                        if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
-                            info "  Key deployed to $machine."
-                        else
-                            info "  Automatic key deployment failed."
-                        fi
-                    fi
-                fi
-            else
-                # Linux host — try ssh-copy-id
-                target_user_var="${m_prefix}_WSL_USER"
-                target_user="${!target_user_var:-}"
-                target="${target_user:+${target_user}@}${m_ts_ip}"
-
-                if ssh -o ConnectTimeout=5 -o BatchMode=yes "$target" "echo ok" &>/dev/null 2>&1; then
-                    if confirm "  SSH works to $machine. Deploy key?"; then
-                        deploy_key_linux "$target" "$PUB_KEY_PATH"
-                        info "  Key deployed to $machine."
-                    fi
-                else
-                    info "  SSH not yet working to $machine."
-                    if command -v ssh-copy-id >/dev/null 2>&1 && confirm "  Try deploying key now? (password prompt expected)"; then
-                        deploy_key_linux "$target" "$PUB_KEY_PATH"
-                        info "  Key deployed to $machine."
                     else
-                        info "  Copy your public key manually:"
-                        info "    ssh-copy-id $target"
+                        info "  SSH not yet working to $machine."
+                        info "  Run these commands on that Windows machine:"
+                        deploy_key_windows_commands "$PUB_KEY_CONTENT" "$m_win_user"
+
+                        if [[ "$TRY_WINDOWS_PASSWORD_DEPLOY" == "true" ]] && \
+                           confirm "  Try deploying key over SSH now anyway? (password prompt expected)"; then
+                            if deploy_key_windows_ssh "${m_win_user}@${m_ts_ip}" "$PUB_KEY_PATH"; then
+                                info "  Key deployed to $machine."
+                            else
+                                info "  Automatic key deployment failed."
+                            fi
+                        fi
+                    fi
+                else
+                    # Linux host — try ssh-copy-id
+                    target_user_var="${m_prefix}_WSL_USER"
+                    target_user="${!target_user_var:-}"
+                    target="${target_user:+${target_user}@}${m_ts_ip}"
+
+                    if ssh -o ConnectTimeout=5 -o BatchMode=yes "$target" "echo ok" &>/dev/null 2>&1; then
+                        if confirm "  SSH works to $machine. Deploy key?"; then
+                            deploy_key_linux "$target" "$PUB_KEY_PATH"
+                            info "  Key deployed to $machine."
+                        fi
+                    else
+                        info "  SSH not yet working to $machine."
+                        if command -v ssh-copy-id >/dev/null 2>&1 && confirm "  Try deploying key now? (password prompt expected)"; then
+                            deploy_key_linux "$target" "$PUB_KEY_PATH"
+                            info "  Key deployed to $machine."
+                        else
+                            info "  Copy your public key manually:"
+                            info "    ssh-copy-id $target"
+                        fi
                     fi
                 fi
-            fi
-        done
+            done
+        fi
     fi
 fi
 

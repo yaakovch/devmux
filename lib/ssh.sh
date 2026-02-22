@@ -135,9 +135,12 @@ PWSH
 # ── SSH config generation ────────────────────────────────────────
 
 # Generate SSH config entries from machines.conf.
-# Usage: generate_ssh_config  (prints to stdout)
+# Usage: generate_ssh_config [tailscale_cli]
+#   tailscale_cli: optional path to tailscale binary (e.g. "tailscale.exe").
+#                  When provided, uses ProxyCommand for keyless SSH via Tailscale.
 # Requires machines.conf to be sourced first.
 generate_ssh_config() {
+    local ts_cli="${1:-}"
     local machine var_prefix ts_ip win_user wsl_user os_type
     local ts_ip_var win_user_var os_type_var wsl_user_var
 
@@ -152,17 +155,26 @@ generate_ssh_config() {
 
         [[ -z "$ts_ip" ]] && continue
 
-        # Windows hosts: SSH lands on Windows, user is the Windows user
-        local ssh_user="$win_user"
-        if [[ "$os_type" == "linux" ]] || [[ "$os_type" == "termux" ]]; then
-            wsl_user_var="${var_prefix}_WSL_USER"
-            wsl_user="${!wsl_user_var:-}"
-            ssh_user="$wsl_user"
+        echo "Host ${machine}"
+
+        if [[ -n "$ts_cli" ]]; then
+            # Tailscale SSH: no keys needed, Tailscale handles auth.
+            # %h is the Host alias (machine name) which Tailscale resolves.
+            echo "    ProxyCommand ${ts_cli} ssh %h"
+        else
+            # Traditional SSH over Tailscale IP — requires SSH keys.
+            # Windows hosts: SSH lands on Windows, user is the Windows user
+            local ssh_user="$win_user"
+            if [[ "$os_type" == "linux" ]] || [[ "$os_type" == "termux" ]]; then
+                wsl_user_var="${var_prefix}_WSL_USER"
+                wsl_user="${!wsl_user_var:-}"
+                ssh_user="$wsl_user"
+            fi
+
+            echo "    HostName ${ts_ip}"
+            [[ -n "$ssh_user" ]] && echo "    User ${ssh_user}"
         fi
 
-        echo "Host ${machine}"
-        echo "    HostName ${ts_ip}"
-        [[ -n "$ssh_user" ]] && echo "    User ${ssh_user}"
         echo ""
     done
 }

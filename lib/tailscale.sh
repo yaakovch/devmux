@@ -2,6 +2,28 @@
 # lib/tailscale.sh — Tailscale detection and helpers.
 # Source this file; do not execute directly.
 
+# Find the best tailscale CLI binary for this platform.
+# On WSL: prefer tailscale.exe (Windows interop — no WSL install needed).
+# On native Linux/Termux: use tailscale.
+# Prints the binary name/path, or empty string if not found.
+find_tailscale_cli() {
+    # WSL: prefer Windows Tailscale via interop
+    if [[ -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then
+        if command -v tailscale.exe &>/dev/null; then
+            echo "tailscale.exe"
+            return 0
+        fi
+    fi
+
+    # Native tailscale
+    if command -v tailscale &>/dev/null; then
+        echo "tailscale"
+        return 0
+    fi
+
+    return 1
+}
+
 # Check if tailscale CLI is available and connected.
 tailscale_available() {
     command -v tailscale &>/dev/null && tailscale status &>/dev/null

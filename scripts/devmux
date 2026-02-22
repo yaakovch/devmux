@@ -213,8 +213,16 @@ preflight_check() {
     
     # Quick connectivity test (3 second timeout)
     if ! ssh $SSH_OPTS -o ConnectTimeout=3 -o BatchMode=yes "$ssh_target" exit 2>/dev/null; then
+        # Check if we're using Tailscale SSH (ProxyCommand) for a better error message
+        local hint="  The host may be offline or SSH keys not configured."
+        if ssh -G "$ssh_target" 2>/dev/null | grep -qi "proxycommand.*tailscale"; then
+            hint="  Tailscale SSH is configured. Check:
+    1. Is Tailscale running? (tailscale status / tailscale.exe status)
+    2. Is the host online in your Tailnet?
+    3. Is Tailscale SSH enabled on the host? (tailscale up --ssh)"
+        fi
         die "Pre-flight check failed: Cannot connect to $HOST ($ssh_target)
-  The host may be offline or SSH keys not configured.
+$hint
   Use --fast to skip this check."
     fi
     
