@@ -418,6 +418,13 @@ if [[ -n "$SESSION_ARG" ]]; then
 fi
 
 # ── Interactive session picker ────────────────────────────────────
+# When invoked via WSL pipe encoding (echo b64 | base64 -d | bash),
+# stdin is the pipe, not the terminal. Reopen stdin from /dev/tty
+# so that interactive pickers (gum, fzf, read) can get user input.
+if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
+    exec 0</dev/tty
+fi
+
 SESSION_DATA=$(list_project_sessions "$SAFE_PROJECT")
 
 # Build picker items
