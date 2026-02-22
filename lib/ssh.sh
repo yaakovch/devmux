@@ -143,6 +143,7 @@ generate_ssh_config() {
     local ts_cli="${1:-}"
     local machine var_prefix ts_ip win_user wsl_user os_type
     local ts_ip_var win_user_var os_type_var wsl_user_var
+    local ts_host_var ts_host
 
     for machine in "${MACHINES[@]}"; do
         var_prefix="MACHINE_${machine//-/_}"
@@ -152,6 +153,9 @@ generate_ssh_config() {
         win_user="${!win_user_var:-}"
         os_type_var="${var_prefix}_OS"
         os_type="${!os_type_var:-linux}"
+        # TAILSCALE_HOST overrides the Tailscale hostname used in ProxyCommand.
+        ts_host_var="${var_prefix}_TAILSCALE_HOST"
+        ts_host="${!ts_host_var:-${machine}}"
 
         [[ -z "$ts_ip" ]] && continue
 
@@ -159,8 +163,13 @@ generate_ssh_config() {
 
         if [[ -n "$ts_cli" ]]; then
             # Tailscale SSH: no keys needed, Tailscale handles auth.
-            # %h is the Host alias (machine name) which Tailscale resolves.
-            echo "    ProxyCommand ${ts_cli} ssh %h"
+            local ts_target="$ts_host"
+            if [[ "$os_type" == "windows-wsl" ]]; then
+                wsl_user_var="${var_prefix}_WSL_USER"
+                wsl_user="${!wsl_user_var:-}"
+                [[ -n "$wsl_user" ]] && ts_target="${wsl_user}@${ts_host}"
+            fi
+            echo "    ProxyCommand ${ts_cli} ssh ${ts_target}"
         else
             # Traditional SSH over Tailscale IP — requires SSH keys.
             # Windows hosts: SSH lands on Windows, user is the Windows user

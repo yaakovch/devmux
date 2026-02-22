@@ -2,6 +2,7 @@
 # devmux — interactive SSH + tmux launcher.
 # Connects to a remote host, picks a project, and manages tmux sessions.
 set -euo pipefail
+SSH_BIN="ssh"  # default; overridden per-host from devmux.conf
 
 # ── Locate repo and source libraries ─────────────────────────────
 resolve_path() {
@@ -189,7 +190,7 @@ ssh_with_retry() {
         fi
         
         # shellcheck disable=SC2086
-        ssh $SSH_OPTS "$@"
+        $SSH_BIN $SSH_OPTS "$@"
         exit_code=$?
         
         if [[ $exit_code -eq 0 ]]; then
@@ -212,18 +213,22 @@ preflight_check() {
     fi
     
     # Quick connectivity test (3 second timeout)
-    if ! ssh $SSH_OPTS -o ConnectTimeout=3 -o BatchMode=yes "$ssh_target" exit 2>/dev/null; then
-        # Check if we're using Tailscale SSH (ProxyCommand) for a better error message
-        local hint="  The host may be offline or SSH keys not configured."
-        if ssh -G "$ssh_target" 2>/dev/null | grep -qi "proxycommand.*tailscale"; then
-            hint="  Tailscale SSH is configured. Check:
+    if [[ "$SSH_BIN" == *tailscale* ]]; then
+        if ! $SSH_BIN "$ssh_target" exit 2>/dev/null; then
+            die "Pre-flight check failed: Cannot connect to $HOST ($ssh_target)
+  Tailscale SSH check:
     1. Is Tailscale running? (tailscale status / tailscale.exe status)
     2. Is the host online in your Tailnet?
-    3. Is Tailscale SSH enabled on the host? (tailscale up --ssh)"
+    3. Is Tailscale SSH enabled on the host? (tailscale up --ssh)
+  Use --fast to skip this check."
         fi
-        die "Pre-flight check failed: Cannot connect to $HOST ($ssh_target)
+    else
+        if ! $SSH_BIN $SSH_OPTS -o ConnectTimeout=3 -o BatchMode=yes "$ssh_target" exit 2>/dev/null; then
+            local hint="  The host may be offline or SSH keys not configured."
+            die "Pre-flight check failed: Cannot connect to $HOST ($ssh_target)
 $hint
   Use --fast to skip this check."
+        fi
     fi
     
     return 0
@@ -348,9 +353,16 @@ else
 fi
 
 SSH_TARGET=$(get_var "HOST_${HOST//-/_}_SSH")
+SSH_BIN=$(get_var "HOST_${HOST//-/_}_SSH_BIN")
+SSH_BIN="${SSH_BIN:-ssh}"
 WSL_PREFIX=$(get_var "HOST_${HOST//-/_}_WSL_PREFIX")
 PROJECTS_DIR=$(get_var "HOST_${HOST//-/_}_PROJECTS_DIR")
 PROJECTS_DIR="${PROJECTS_DIR:-\$HOME/projects}"
+
+# When using tailscale ssh natively, SSH_OPTS are incompatible
+if [[ "$SSH_BIN" == *tailscale* ]]; then
+    SSH_OPTS=""
+fi
 
 if [[ -z "$SSH_TARGET" ]]; then
     die "HOST_${HOST//-/_}_SSH not set in config."
@@ -394,14 +406,25 @@ else
 
     PROJECT_LIST=""
     # shellcheck disable=SC2086
-    PROJECT_LIST=$(spin "Connecting to $HOST ($SSH_TARGET)..." \
-        ssh_with_retry -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
-        die "SSH connection failed to $HOST ($SSH_TARGET) after 3 attempts
+    if [[ "$SSH_BIN" == *tailscale* ]]; then
+        # tailscale.exe doesn't work inside gum spin (WSL interop issue)
+        info "  Connecting to $HOST ($SSH_TARGET)..."
+        PROJECT_LIST=$(ssh_with_retry "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
+            die "SSH connection failed to $HOST ($SSH_TARGET) after 3 attempts
+  Tailscale SSH check:
+    1. Is Tailscale running? (tailscale status / tailscale.exe status)
+    2. Is the host online in your Tailnet?
+    3. Is Tailscale SSH enabled on the host? (tailscale up --ssh)"
+    else
+        PROJECT_LIST=$(spin "Connecting to $HOST ($SSH_TARGET)..." \
+            ssh_with_retry -o ConnectTimeout=10 "$SSH_TARGET" "$REMOTE_CMD" 2>/dev/null) || \
+            die "SSH connection failed to $HOST ($SSH_TARGET) after 3 attempts
   Troubleshooting:
     1. Verify the host is online: ping $SSH_TARGET
     2. Check SSH config: ssh -G $HOST | grep hostname
     3. Test manually: ssh -v $SSH_TARGET echo 'OK'
     4. Verify SSH key is authorized on the remote host"
+    fi
 fi
 
 if [[ -z "$PROJECT_LIST" ]]; then
@@ -419,7 +442,7 @@ if [[ -z "$PROJECT_LIST" ]]; then
     else
         if confirm "Create a sample project on $HOST?"; then
             # Create project on remote host
-            ssh $SSH_OPTS "$SSH_TARGET" "mkdir -p $PROJECTS_DIR/my-project && echo '# My Project' > $PROJECTS_DIR/my-project/README.md"
+            $SSH_BIN $SSH_OPTS "$SSH_TARGET" "mkdir -p $PROJECTS_DIR/my-project && echo '# My Project' > $PROJECTS_DIR/my-project/README.md"
             ok "Created sample project 'my-project' on $HOST"
             PROJECT_LIST="my-project"
         else
@@ -471,5 +494,9 @@ if $LOCAL_MODE; then
 else
     debug "Full command: $FULL_CMD"
     # shellcheck disable=SC2086
-    exec ssh $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"
+    if [[ "$SSH_BIN" == *tailscale* ]]; then
+        exec $SSH_BIN $SSH_OPTS "$SSH_TARGET" "$FULL_CMD"
+    else
+        exec $SSH_BIN $SSH_OPTS -t "$SSH_TARGET" "$FULL_CMD"
+    fi
 fi

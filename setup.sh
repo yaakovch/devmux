@@ -137,7 +137,24 @@ _generate_devmux_conf() {
         # Use machine name as host nickname
         hosts+=("$machine")
 
-        host_lines+="HOST_${machine//-/_}_SSH=\"${machine}\"\n"
+        # Determine SSH binary and target
+        if [[ -n "${TS_CLI:-}" ]] && [[ "${SSH_PREFER[0]:-}" == "tailscale-ssh" ]]; then
+            # Use tailscale ssh directly (not via OpenSSH ProxyCommand)
+            host_lines+="HOST_${machine//-/_}_SSH_BIN=\"${TS_CLI} ssh\"\n"
+
+            # Build tailscale SSH target: [user@]tailscale-hostname
+            local ts_host_var="${m_prefix}_TAILSCALE_HOST"
+            local ts_host="${!ts_host_var:-${machine}}"
+            local ts_target="$ts_host"
+            if [[ "$m_os" == "windows-wsl" ]]; then
+                local wsl_user_var="${m_prefix}_WSL_USER"
+                local wsl_user="${!wsl_user_var:-}"
+                [[ -n "$wsl_user" ]] && ts_target="${wsl_user}@${ts_host}"
+            fi
+            host_lines+="HOST_${machine//-/_}_SSH=\"${ts_target}\"\n"
+        else
+            host_lines+="HOST_${machine//-/_}_SSH=\"${machine}\"\n"
+        fi
 
         if [[ "$m_os" == "windows-wsl" ]]; then
             distro_var="${m_prefix}_WSL_DISTRO"
